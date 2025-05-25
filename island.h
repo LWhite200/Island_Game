@@ -4,7 +4,7 @@
 #include "common.h"
 #include "kd_tree.h"
 
-#define NUM_CTRL_POINTS 12  // Increased for smoother shapes
+#define NUM_CTRL_POINTS 12
 #define NUM_SEGMENTS 32
 
 typedef enum {
@@ -13,9 +13,21 @@ typedef enum {
     ISLAND_ARCTIC
 } IslandType;
 
-void initIsland(float baseRadius);
-void drawIsland();
-bool checkIslandCollision(Vec3 position, float radius);
-void freeIslandResources();
+typedef struct {
+    Vec3 position;
+    float radius;
+    bool isInitialized;
+    IslandType colorStyle;
+    KDNode* kdTree;
+    void* vertices;  // Opaque pointer to vertex data
+    int numVertices;
+    float ctrlRadius[NUM_CTRL_POINTS];
+    float ctrlHeight[NUM_CTRL_POINTS];
+} Island;
+
+void initIsland(Island* island, float baseRadius);
+void drawIsland(Island* island);
+bool checkIslandCollision(Island* island, Vec3 position, float radius);
+void freeIslandResources(Island* island);
 
 #endif

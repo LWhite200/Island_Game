@@ -3,26 +3,16 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdbool.h>
-#include <malloc.h>  // Added for memalign
+#include <malloc.h>
 #include "common.h"
 #include "kd_tree.h"
 #include "island.h"
-#include <time.h>
 #include <stdint.h>
 
 typedef struct {
     Vec3 position;
     float r, g, b;
 } IslandVertex;
-
-static bool isInitialized = false;
-static float ctrlRadius[NUM_CTRL_POINTS];
-static float ctrlHeight[NUM_CTRL_POINTS];
-static KDNode* islandKDTree = NULL;
-static IslandVertex* islandVertices = NULL;
-static int numVertices = 0;
-static IslandType islandColorStyle;
-static Vec3 islandPosition = { 0.0f, 0.0f, 15.0f };
 
 // Helper functions
 static int clampCtrlIndex(int i) {
@@ -47,24 +37,14 @@ static float randomFloat(float min, float max) {
     return min + (max - min) * ((float)rand() / RAND_MAX);
 }
 
-static void generateIslandShape(float baseRadius) {
-    // Only initialize random seed once at program start
-    static bool firstTime = true;
-    if (firstTime) {
-        srand(time(NULL));
-        firstTime = false;
-    }
-
-    // More varied island types
-    islandColorStyle = rand() % 3;
-
+static void generateIslandShape(Island* island, float baseRadius) {
     // More parameters for shape variation
     float noiseFreq1 = randomFloat(1.0f, 3.0f);
     float noiseFreq2 = randomFloat(0.3f, 1.5f);
     float noiseAmp1 = randomFloat(0.1f, 0.5f);
     float noiseAmp2 = randomFloat(0.05f, 0.2f);
     float heightScale = randomFloat(1.0f, 3.0f);
-    float asymmetry = randomFloat(0.5f, 2.0f); // Makes islands lopsided
+    float asymmetry = randomFloat(0.5f, 2.0f);
 
     // Generate control points with more complex noise
     for (int i = 0; i < NUM_CTRL_POINTS; ++i) {
@@ -82,16 +62,16 @@ static void generateIslandShape(float baseRadius) {
         float jitter = randomFloat(-0.3f, 0.3f);
 
         // Calculate radius with more variation
-        ctrlRadius[i] = baseRadius * (1.0f + noiseAmp1 * combined + jitter);
+        island->ctrlRadius[i] = baseRadius * (1.0f + noiseAmp1 * combined + jitter);
 
         // Height with more variation
         float heightBase = sinf(angle * heightScale);
         float heightMod = cosf(angle * 0.7f * asymmetry);
-        ctrlHeight[i] = heightBase * (1.0f + noiseAmp2 * heightMod) + randomFloat(-0.5f, 0.5f);
+        island->ctrlHeight[i] = heightBase * (1.0f + noiseAmp2 * heightMod) + randomFloat(-0.5f, 0.5f);
 
         // Add occasional spikes for more interesting shapes
         if (rand() % 10 == 0) {
-            ctrlHeight[i] += randomFloat(0.5f, 2.0f);
+            island->ctrlHeight[i] += randomFloat(0.5f, 2.0f);
         }
     }
 
@@ -99,14 +79,12 @@ static void generateIslandShape(float baseRadius) {
     for (int i = 0; i < NUM_CTRL_POINTS; ++i) {
         int prev = clampCtrlIndex(i - 1);
         int next = clampCtrlIndex(i + 1);
-        ctrlRadius[i] = (ctrlRadius[prev] + ctrlRadius[i] + ctrlRadius[next]) / 3.0f;
-        ctrlHeight[i] = (ctrlHeight[prev] + ctrlHeight[i] + ctrlHeight[next]) / 3.0f;
+        island->ctrlRadius[i] = (island->ctrlRadius[prev] + island->ctrlRadius[i] + island->ctrlRadius[next]) / 3.0f;
+        island->ctrlHeight[i] = (island->ctrlHeight[prev] + island->ctrlHeight[i] + island->ctrlHeight[next]) / 3.0f;
     }
 }
 
-
-
-static float getInterpolatedRadius(float theta) {
+static float getInterpolatedRadius(Island* island, float theta) {
     float t = theta / (2.0f * M_PI) * NUM_CTRL_POINTS;
     int i1 = (int)floorf(t);
     float localT = t - i1;
@@ -116,10 +94,11 @@ static float getInterpolatedRadius(float theta) {
     int i3 = clampCtrlIndex(i1 + 2);
     i1 = clampCtrlIndex(i1);
 
-    return catmullRom(ctrlRadius[i0], ctrlRadius[i1], ctrlRadius[i2], ctrlRadius[i3], localT);
+    return catmullRom(island->ctrlRadius[i0], island->ctrlRadius[i1],
+        island->ctrlRadius[i2], island->ctrlRadius[i3], localT);
 }
 
-static float getInterpolatedHeight(float theta) {
+static float getInterpolatedHeight(Island* island, float theta) {
     float t = theta / (2.0f * M_PI) * NUM_CTRL_POINTS;
     int i1 = (int)floorf(t);
     float localT = t - i1;
@@ -129,13 +108,14 @@ static float getInterpolatedHeight(float theta) {
     int i3 = clampCtrlIndex(i1 + 2);
     i1 = clampCtrlIndex(i1);
 
-    return catmullRom(ctrlHeight[i0], ctrlHeight[i1], ctrlHeight[i2], ctrlHeight[i3], localT);
+    return catmullRom(island->ctrlHeight[i0], island->ctrlHeight[i1],
+        island->ctrlHeight[i2], island->ctrlHeight[i3], localT);
 }
 
-static void colorForHeight(float height, float baseY, float* r, float* g, float* b) {
-    float t = (height - baseY) / 3.0f;
+static void colorForHeight(Island* island, float height, float* r, float* g, float* b) {
+    float t = (height - island->position.y) / 3.0f;
 
-    switch (islandColorStyle) {
+    switch (island->colorStyle) {
     case ISLAND_TROPICAL:
         if (t < 0.2f) { *r = 0.95f; *g = 0.85f; *b = 0.6f; }
         else if (t < 0.6f) { *r = 0.2f; *g = 0.7f; *b = 0.3f; }
@@ -154,19 +134,18 @@ static void colorForHeight(float height, float baseY, float* r, float* g, float*
     }
 }
 
-void initIsland(float baseRadius) {
-    if (isInitialized) return;
+void initIsland(Island* island, float baseRadius) {
+    if (island->isInitialized) return;
 
-    unsigned int seed = (unsigned int)time(NULL) ^ (uintptr_t)&baseRadius;
+    unsigned int seed = (unsigned int)time(NULL) ^ (uintptr_t)island;
     srand(seed);
-    // Better: call this once in your game loop after user interaction, etc.
-    srand(time(NULL) ^ ((uintptr_t)&seed << 16) ^ (uintptr_t)&ctrlRadius);
 
-    generateIslandShape(baseRadius);
+    island->colorStyle = rand() % 3;
+    generateIslandShape(island, baseRadius);
 
-    // Calculate number of vertices needed (4 per quad, NUM_SEGMENTS^2 quads)
-    numVertices = NUM_SEGMENTS * (NUM_SEGMENTS / 2) * 4;
-    islandVertices = (IslandVertex*)memalign(32, numVertices * sizeof(IslandVertex));
+    // Calculate number of vertices needed
+    island->numVertices = NUM_SEGMENTS * (NUM_SEGMENTS / 2) * 4;
+    island->vertices = (IslandVertex*)memalign(32, island->numVertices * sizeof(IslandVertex));
 
     int vertexIndex = 0;
 
@@ -181,86 +160,86 @@ void initIsland(float baseRadius) {
             float cosPhi1 = cosf(phi1);
             float cosPhi2 = cosf(phi2);
 
-            float r11 = getInterpolatedRadius(theta1) * cosPhi1;
-            float r12 = getInterpolatedRadius(theta2) * cosPhi1;
-            float r22 = getInterpolatedRadius(theta2) * cosPhi2;
-            float r21 = getInterpolatedRadius(theta1) * cosPhi2;
+            float r11 = getInterpolatedRadius(island, theta1) * cosPhi1;
+            float r12 = getInterpolatedRadius(island, theta2) * cosPhi1;
+            float r22 = getInterpolatedRadius(island, theta2) * cosPhi2;
+            float r21 = getInterpolatedRadius(island, theta1) * cosPhi2;
 
-            float hOffset1 = getInterpolatedHeight(theta1);
-            float hOffset2 = getInterpolatedHeight(theta2);
+            float hOffset1 = getInterpolatedHeight(island, theta1);
+            float hOffset2 = getInterpolatedHeight(island, theta2);
 
             float baseHill1 = 2.0f * (1.0f - cosPhi1 * cosPhi1);
             float baseHill2 = 2.0f * (1.0f - cosPhi2 * cosPhi2);
 
             // Vertex 1
-            islandVertices[vertexIndex].position.x = islandPosition.x + r11 * cosf(theta1);
-            islandVertices[vertexIndex].position.y = islandPosition.y + baseHill1 + hOffset1;
-            islandVertices[vertexIndex].position.z = islandPosition.z + r11 * sinf(theta1);
-            colorForHeight(islandVertices[vertexIndex].position.y, islandPosition.y,
-                &islandVertices[vertexIndex].r,
-                &islandVertices[vertexIndex].g,
-                &islandVertices[vertexIndex].b);
+            ((IslandVertex*)island->vertices)[vertexIndex].position.x = island->position.x + r11 * cosf(theta1);
+            ((IslandVertex*)island->vertices)[vertexIndex].position.y = island->position.y + baseHill1 + hOffset1;
+            ((IslandVertex*)island->vertices)[vertexIndex].position.z = island->position.z + r11 * sinf(theta1);
+            colorForHeight(island, ((IslandVertex*)island->vertices)[vertexIndex].position.y,
+                &((IslandVertex*)island->vertices)[vertexIndex].r,
+                &((IslandVertex*)island->vertices)[vertexIndex].g,
+                &((IslandVertex*)island->vertices)[vertexIndex].b);
             vertexIndex++;
 
             // Vertex 2
-            islandVertices[vertexIndex].position.x = islandPosition.x + r12 * cosf(theta2);
-            islandVertices[vertexIndex].position.y = islandPosition.y + baseHill1 + hOffset2;
-            islandVertices[vertexIndex].position.z = islandPosition.z + r12 * sinf(theta2);
-            colorForHeight(islandVertices[vertexIndex].position.y, islandPosition.y,
-                &islandVertices[vertexIndex].r,
-                &islandVertices[vertexIndex].g,
-                &islandVertices[vertexIndex].b);
+            ((IslandVertex*)island->vertices)[vertexIndex].position.x = island->position.x + r12 * cosf(theta2);
+            ((IslandVertex*)island->vertices)[vertexIndex].position.y = island->position.y + baseHill1 + hOffset2;
+            ((IslandVertex*)island->vertices)[vertexIndex].position.z = island->position.z + r12 * sinf(theta2);
+            colorForHeight(island, ((IslandVertex*)island->vertices)[vertexIndex].position.y,
+                &((IslandVertex*)island->vertices)[vertexIndex].r,
+                &((IslandVertex*)island->vertices)[vertexIndex].g,
+                &((IslandVertex*)island->vertices)[vertexIndex].b);
             vertexIndex++;
 
             // Vertex 3
-            islandVertices[vertexIndex].position.x = islandPosition.x + r22 * cosf(theta2);
-            islandVertices[vertexIndex].position.y = islandPosition.y + baseHill2 + hOffset2;
-            islandVertices[vertexIndex].position.z = islandPosition.z + r22 * sinf(theta2);
-            colorForHeight(islandVertices[vertexIndex].position.y, islandPosition.y,
-                &islandVertices[vertexIndex].r,
-                &islandVertices[vertexIndex].g,
-                &islandVertices[vertexIndex].b);
+            ((IslandVertex*)island->vertices)[vertexIndex].position.x = island->position.x + r22 * cosf(theta2);
+            ((IslandVertex*)island->vertices)[vertexIndex].position.y = island->position.y + baseHill2 + hOffset2;
+            ((IslandVertex*)island->vertices)[vertexIndex].position.z = island->position.z + r22 * sinf(theta2);
+            colorForHeight(island, ((IslandVertex*)island->vertices)[vertexIndex].position.y,
+                &((IslandVertex*)island->vertices)[vertexIndex].r,
+                &((IslandVertex*)island->vertices)[vertexIndex].g,
+                &((IslandVertex*)island->vertices)[vertexIndex].b);
             vertexIndex++;
 
             // Vertex 4
-            islandVertices[vertexIndex].position.x = islandPosition.x + r21 * cosf(theta1);
-            islandVertices[vertexIndex].position.y = islandPosition.y + baseHill2 + hOffset1;
-            islandVertices[vertexIndex].position.z = islandPosition.z + r21 * sinf(theta1);
-            colorForHeight(islandVertices[vertexIndex].position.y, islandPosition.y,
-                &islandVertices[vertexIndex].r,
-                &islandVertices[vertexIndex].g,
-                &islandVertices[vertexIndex].b);
+            ((IslandVertex*)island->vertices)[vertexIndex].position.x = island->position.x + r21 * cosf(theta1);
+            ((IslandVertex*)island->vertices)[vertexIndex].position.y = island->position.y + baseHill2 + hOffset1;
+            ((IslandVertex*)island->vertices)[vertexIndex].position.z = island->position.z + r21 * sinf(theta1);
+            colorForHeight(island, ((IslandVertex*)island->vertices)[vertexIndex].position.y,
+                &((IslandVertex*)island->vertices)[vertexIndex].r,
+                &((IslandVertex*)island->vertices)[vertexIndex].g,
+                &((IslandVertex*)island->vertices)[vertexIndex].b);
             vertexIndex++;
 
             // Create collision triangles
             Triangle tri1 = {
-                islandVertices[vertexIndex - 4].position,
-                islandVertices[vertexIndex - 3].position,
-                islandVertices[vertexIndex - 2].position
+                ((IslandVertex*)island->vertices)[vertexIndex - 4].position,
+                ((IslandVertex*)island->vertices)[vertexIndex - 3].position,
+                ((IslandVertex*)island->vertices)[vertexIndex - 2].position
             };
 
             Triangle tri2 = {
-                islandVertices[vertexIndex - 4].position,
-                islandVertices[vertexIndex - 2].position,
-                islandVertices[vertexIndex - 1].position
+                ((IslandVertex*)island->vertices)[vertexIndex - 4].position,
+                ((IslandVertex*)island->vertices)[vertexIndex - 2].position,
+                ((IslandVertex*)island->vertices)[vertexIndex - 1].position
             };
 
-            islandKDTree = kd_insert(islandKDTree, tri1, 0);
-            islandKDTree = kd_insert(islandKDTree, tri2, 0);
+            island->kdTree = kd_insert(island->kdTree, tri1, 0);
+            island->kdTree = kd_insert(island->kdTree, tri2, 0);
         }
     }
 
-    isInitialized = true;
+    island->isInitialized = true;
 }
 
-void drawIsland() {
-    if (!isInitialized) return;
+void drawIsland(Island* island) {
+    if (!island->isInitialized) return;
 
     // Draw all quads
-    for (int i = 0; i < numVertices; i += 4) {
+    for (int i = 0; i < island->numVertices; i += 4) {
         GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
         for (int j = 0; j < 4; j++) {
-            IslandVertex* v = &islandVertices[i + j];
+            IslandVertex* v = &((IslandVertex*)island->vertices)[i + j];
             GX_Position3f32(v->position.x, v->position.y, v->position.z);
             GX_Color3f32(v->r, v->g, v->b);
         }
@@ -268,8 +247,8 @@ void drawIsland() {
     }
 }
 
-bool checkIslandCollision(Vec3 position, float radius) {
-    if (!islandKDTree) return false;
+bool checkIslandCollision(Island* island, Vec3 position, float radius) {
+    if (!island->kdTree) return false;
 
     Triangle nearbyTris[16];
     int triCount = 0;
@@ -281,7 +260,7 @@ bool checkIslandCollision(Vec3 position, float radius) {
         }
     }
 
-    kd_query_nearest(islandKDTree, position, collisionRadius * 2.0f, collectCallback);
+    kd_query_nearest(island->kdTree, position, collisionRadius * 2.0f, collectCallback);
 
     for (int i = 0; i < triCount; i++) {
         Triangle tri = nearbyTris[i];
@@ -324,14 +303,18 @@ bool checkIslandCollision(Vec3 position, float radius) {
     return false;
 }
 
-void freeIslandResources() {
-    if (islandKDTree) {
-        kd_free(islandKDTree);
-        islandKDTree = NULL;
+void freeIslandResources(Island* island) {
+    if (!island) return;
+
+    if (island->kdTree) {
+        kd_free(island->kdTree);
+        island->kdTree = NULL;
     }
-    if (islandVertices) {
-        free(islandVertices);
-        islandVertices = NULL;
+
+    if (island->vertices) {
+        free(island->vertices);
+        island->vertices = NULL;
     }
-    isInitialized = false;
+
+    island->isInitialized = false;
 }

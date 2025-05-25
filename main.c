@@ -10,7 +10,7 @@
 #include "water.h"
 #include "island.h"
 #include "boat.h"
-
+#include "manager.h"
 
 int main(int argc, char** argv) {
     // Original main function code exactly as you wrote it
@@ -27,8 +27,13 @@ int main(int argc, char** argv) {
     VIDEO_Init();
     PAD_Init();
 
-    // create the island i guess
-    initIsland(ISLAND_RADIUS);
+    IslandManager islandManager;
+    initIslandManager(&islandManager);
+
+    // Create some islands
+    createIsland(&islandManager, 0.0f, -15.0f, ISLAND_RADIUS);
+    createIsland(&islandManager, 20.0f, 10.0f, ISLAND_RADIUS);
+    createIsland(&islandManager, -15.0f, 20.0f, ISLAND_RADIUS);
 
     rmode = VIDEO_GetPreferredMode(NULL);
 
@@ -105,6 +110,11 @@ int main(int argc, char** argv) {
 
         if (PAD_ButtonsDown(0) & PAD_BUTTON_START) exit(0);
 
+        // Add this block to handle A button press
+        if (PAD_ButtonsDown(0) & PAD_BUTTON_A) {
+            regenerateIslands(&islandManager);
+        }
+
         const float threshold = 2.0f;
 
         bool left = false, right = false, upp = false, down = false;
@@ -128,7 +138,7 @@ int main(int argc, char** argv) {
                 boatPos.z + cosf(boatYaw) * boatSpeed
             };
 
-            if (!checkIslandCollision(newPos, cRadius)) {
+            if (!checkAllIslandsCollision(&islandManager, newPos, cRadius)) {
                 boatPos.x = newPos.x;
                 boatPos.z = newPos.z;
             }
@@ -146,11 +156,11 @@ int main(int argc, char** argv) {
                 boatPos.z - cosf(boatYaw) * boatSpeed
             };
 
-            if (!checkIslandCollision(newPos, cRadius)) {
+            if (!checkAllIslandsCollision(&islandManager, newPos, cRadius)) {
                 
             }
             boatPos.x = newPos.x;
-            boatPos.z = newPos.z
+            boatPos.z = newPos.z;
         }
 
         if (left) { // Turn boat left
@@ -199,7 +209,7 @@ int main(int argc, char** argv) {
         // Resets time variable so no overflow
 
         // Draw the island (spherical shape)
-        drawIsland(0.0f, 0.0f, 15.0f);  // Place island at the origin
+        drawAllIslands(&islandManager);  // Place island at the origin
 
         // Draw the boat in front of the player
         float boatHeight = sinf((boatPos.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
@@ -220,6 +230,6 @@ int main(int argc, char** argv) {
         VIDEO_WaitVSync();
     }
 
-    freeIslandResources();
+    freeAllIslands(&islandManager);
     return 0;
 }
