@@ -27,6 +27,9 @@ int main(int argc, char** argv) {
     VIDEO_Init();
     PAD_Init();
 
+    // create the island i guess
+    initIsland(ISLAND_RADIUS);
+
     rmode = VIDEO_GetPreferredMode(NULL);
 
     // Allocate 2 framebuffers for double buffering
@@ -114,14 +117,40 @@ int main(int argc, char** argv) {
         if (joystickY > threshold) upp = true;      // Up
 
         // Boat movement using Wii remote buttons
+        // In the boat movement section, replace with:
         if (upp) { // Move boat forward
-            boatPos.x -= sinf(boatYaw) * boatSpeed;
-            boatPos.z += cosf(boatYaw) * boatSpeed;
+            float boatHeight = sinf((boatPos.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+                cosf((boatPos.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
+
+            Vec3 newPos = {
+                boatPos.x - sinf(boatYaw) * boatSpeed,
+                boatHeight,
+                boatPos.z + cosf(boatYaw) * boatSpeed
+            };
+
+            if (!checkIslandCollision(newPos, cRadius)) {
+                boatPos.x = newPos.x;
+                boatPos.z = newPos.z;
+            }
+
+            
         }
 
         if (down) { // Move boat backward
-            boatPos.x += sinf(boatYaw) * boatSpeed;
-            boatPos.z -= cosf(boatYaw) * boatSpeed;
+            float boatHeight = sinf((boatPos.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+                cosf((boatPos.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
+
+            Vec3 newPos = {
+                boatPos.x + sinf(boatYaw) * boatSpeed,
+                boatHeight,
+                boatPos.z - cosf(boatYaw) * boatSpeed
+            };
+
+            if (!checkIslandCollision(newPos, cRadius)) {
+                
+            }
+            boatPos.x = newPos.x;
+            boatPos.z = newPos.z
         }
 
         if (left) { // Turn boat left
@@ -191,5 +220,6 @@ int main(int argc, char** argv) {
         VIDEO_WaitVSync();
     }
 
+    freeIslandResources();
     return 0;
 }
