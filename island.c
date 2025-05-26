@@ -513,7 +513,7 @@ void drawNearestTriangleToPlayer(Island* island, Vec3 playerPos, float playerRad
 
 
 
-
+// Simply frees the memory
 void freeIslandResources(Island* island) {
     if (!island) return;
 

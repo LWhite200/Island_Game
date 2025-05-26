@@ -73,48 +73,103 @@ void initCamera(Camera* camera) {
     camera->heightOffset = 0.5f;
 }
 
+void drawIndicator(Vec3 position) {
+    float yOffset = 0.5f;         // Height above the position
+    float size = 0.5f;            // Size of the triangle
+
+    // Triangle will float above the position
+    float x = position.x;
+    float y = position.y + yOffset;
+    float z = position.z;
+
+    // Define 3 vertices of a triangle centered above the point
+    // These form a flat triangle pointing up in the XZ plane
+    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 3);
+
+    // Top vertex
+    GX_Position3f32(x, y + size, z);
+    GX_Color3f32(1.0f, 0.0f, 0.0f);  
+
+    // Bottom-left vertex
+    GX_Position3f32(x - size, y, z);
+    GX_Color3f32(0.0f, 1.0f, 0.0f);  
+
+    // Bottom-right vertex
+    GX_Position3f32(x + size, y, z);
+    GX_Color3f32(0.0f, 0.0f, 1.0f); 
+
+    GX_End();
+}
+
+
+// Update boat position based on input
 // Update boat position based on input
 void updateBoat(Boat* boat, bool upp, bool down, bool left, bool right, float time, IslandManager* islandManager) {
-    if (upp) { // Move boat forward
-        float boatHeight = sinf((boat->position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
-            cosf((boat->position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
 
-        Vec3 newPos = {
-            boat->position.x - sinf(boat->yaw) * boat->speed,
-            boatHeight,
-            boat->position.z + cosf(boat->yaw) * boat->speed
-        };
+    // Compute wave height at boat's current position
+    float boatHeight = sinf((boat->position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+        cosf((boat->position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
 
-        if (!checkAllIslandsCollision(islandManager, newPos, boat->radius)) {
-            boat->position.x = newPos.x;
-            boat->position.z = newPos.z;
-        }
+    // Current position of the boat (for collision and indicator)
+    Vec3 curPos = {
+        boat->position.x,
+        boatHeight,
+        boat->position.z
+    };
+
+    // Forward and backward position for collision checking
+    Vec3 backwardPos = {
+        boat->position.x + sinf(boat->yaw) * boat->speed,
+        boatHeight,
+        boat->position.z - cosf(boat->yaw) * boat->speed
+    };
+
+    Vec3 forwardPos = {
+        boat->position.x - sinf(boat->yaw) * boat->speed,
+        boatHeight,
+        boat->position.z + cosf(boat->yaw) * boat->speed
+    };
+
+    // Collision checks
+    bool frontBlocked = checkAllIslandsCollision(islandManager, forwardPos, boat->radius);
+    bool currentlyBlocked = checkAllIslandsCollision(islandManager, curPos, boat->radius);
+    bool behindBlocked = checkAllIslandsCollision(islandManager, backwardPos, boat->radius);
+
+    // Show indicator if near island
+    if (frontBlocked || currentlyBlocked || behindBlocked) {
+        drawIndicator(curPos);
     }
 
-    if (down) { // Move boat backward
-        float boatHeight = sinf((boat->position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
-            cosf((boat->position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
-
-        Vec3 newPos = {
-            boat->position.x + sinf(boat->yaw) * boat->speed,
-            boatHeight,
-            boat->position.z - cosf(boat->yaw) * boat->speed
-        };
-
-        if (!checkAllIslandsCollision(islandManager, newPos, boat->radius)) {
-            boat->position.x = newPos.x;
-            boat->position.z = newPos.z;
-        }
+    // Movement
+    if (down && !behindBlocked) {
+        boat->position.x += sinf(boat->yaw) * boat->speed;
+        boat->position.z -= cosf(boat->yaw) * boat->speed;
     }
 
-    if (left) { // Turn boat left
+    if (upp && !frontBlocked) {
+        boat->position.x -= sinf(boat->yaw) * boat->speed;
+        boat->position.z += cosf(boat->yaw) * boat->speed;
+    }
+
+    // Rotation
+    if (left) {
         boat->yaw -= 0.05f;
     }
 
-    if (right) { // Turn boat right
+    if (right) {
         boat->yaw += 0.05f;
     }
 }
+
+
+
+
+
+
+
+
+
+
 
 // Update player position based on input (same as boat for now)
 void updatePlayer(Player* player, bool upp, bool down, bool left, bool right, float time, IslandManager* islandManager) {
@@ -359,7 +414,7 @@ int main(int argc, char** argv) {
         guMtxConcat(view, model, modelview);
         GX_LoadPosMtxImm(modelview, GX_PNMTX0);
 
-        drawWater(time);
+        // drawWater(time);
 
         // Increment time for wave movement
         time += WAVE_SPEED;
