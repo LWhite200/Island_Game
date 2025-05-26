@@ -8,13 +8,14 @@
 #include "kd_tree.h"
 #include "island.h"
 #include <stdint.h>
+#include <float.h>
 
 typedef struct {
     Vec3 position;
     float r, g, b;
 } IslandVertex;
 
-// Helper functions
+// Helper function to wrap around control point indices
 static int clampCtrlIndex(int i) {
     int n = NUM_CTRL_POINTS;
     while (i < 0) i += n;
@@ -22,6 +23,7 @@ static int clampCtrlIndex(int i) {
     return i;
 }
 
+// Catmull-Rom interpolation for smooth curves
 static float catmullRom(float p0, float p1, float p2, float p3, float t) {
     float t2 = t * t;
     float t3 = t2 * t;
@@ -33,57 +35,95 @@ static float catmullRom(float p0, float p1, float p2, float p3, float t) {
         );
 }
 
+// Generate random float between min and max
 static float randomFloat(float min, float max) {
     return min + (max - min) * ((float)rand() / RAND_MAX);
 }
 
-static void generateIslandShape(Island* island, float baseRadius) {
-    // More parameters for shape variation
-    float noiseFreq1 = randomFloat(1.0f, 3.0f);
-    float noiseFreq2 = randomFloat(0.3f, 1.5f);
-    float noiseAmp1 = randomFloat(0.1f, 0.5f);
-    float noiseAmp2 = randomFloat(0.05f, 0.2f);
-    float heightScale = randomFloat(1.0f, 3.0f);
-    float asymmetry = randomFloat(0.5f, 2.0f);
+// New helper functions for more varied island shapes
+static float noise1D(float x, float freq, int octaves) {
+    float value = 0.0f;
+    float amplitude = 1.0f;
+    float maxAmplitude = 0.0f;
 
-    // Generate control points with more complex noise
-    for (int i = 0; i < NUM_CTRL_POINTS; ++i) {
-        float angle = 2.0f * M_PI * i / NUM_CTRL_POINTS;
-
-        // Multiple layers of noise
-        float wave1 = sinf(noiseFreq1 * angle);
-        float wave2 = cosf(noiseFreq2 * angle * asymmetry);
-        float wave3 = sinf(noiseFreq1 * 2.3f * angle + 1.5f);
-
-        // Combine waves with different weights
-        float combined = (wave1 * 0.5f + wave2 * 0.3f + wave3 * 0.2f);
-
-        // Add some pure randomness
-        float jitter = randomFloat(-0.3f, 0.3f);
-
-        // Calculate radius with more variation
-        island->ctrlRadius[i] = baseRadius * (1.0f + noiseAmp1 * combined + jitter);
-
-        // Height with more variation
-        float heightBase = sinf(angle * heightScale);
-        float heightMod = cosf(angle * 0.7f * asymmetry);
-        island->ctrlHeight[i] = heightBase * (1.0f + noiseAmp2 * heightMod) + randomFloat(-0.5f, 0.5f);
-
-        // Add occasional spikes for more interesting shapes
-        if (rand() % 10 == 0) {
-            island->ctrlHeight[i] += randomFloat(0.5f, 2.0f);
-        }
+    for (int i = 0; i < octaves; i++) {
+        value += sinf(x * freq) * amplitude;
+        maxAmplitude += amplitude;
+        amplitude *= 0.5f;
+        freq *= 2.0f;
     }
 
-    // Smooth the control points a bit
+    return value / maxAmplitude;
+}
+
+static float ridgeNoise(float x, float freq, int octaves) {
+    float val = noise1D(x, freq, octaves);
+    return 1.0f - 2.0f * fabsf(val);
+}
+
+static float randomPeakHeight(Island* island) {
+    // Base height with random variation
+    float baseHeight = randomFloat(ISLAND_MIN_HEIGHT, ISLAND_MAX_HEIGHT);
+
+    // Add extra height variation (30% chance of being taller)
+    if (rand() % 100 < 30) {
+        baseHeight *= 1.5f + 0.5f * ((float)rand() / RAND_MAX);
+    }
+
+    return baseHeight;
+}
+
+// Simplified island shape generation
+static void generateIslandShape(Island* island, float baseRadius) {
+    // Determine island type (0 = normal, 1 = peaked, 2 = flat, 3 = crater)
+    int islandType = rand() % 4;
+    float peakAngle = 2.0f * M_PI * ((float)rand() / RAND_MAX); // Random peak position
+
+    // Generate control points with more variation
+    for (int i = 0; i < NUM_CTRL_POINTS; ++i) {
+        float angle = 2.0f * M_PI * i / NUM_CTRL_POINTS;
+        float distanceToPeak = fabsf(angle - peakAngle);
+        if (distanceToPeak > M_PI) distanceToPeak = 2.0f * M_PI - distanceToPeak;
+
+        // Base radius with more variation
+        float radiusVariation = 0.5f + 0.5f * ridgeNoise(angle, 2.0f, 3);
+        island->ctrlRadius[i] = randomFloat(ISLAND_MIN_RADIUS, ISLAND_MAX_RADIUS) * radiusVariation;
+
+        // Height generation based on island type
+        switch (islandType) {
+        case 0: // Normal island
+            island->ctrlHeight[i] = randomPeakHeight(island) *
+                (0.7f + 0.3f * cosf(distanceToPeak * 2.0f));
+            break;
+        case 1: // Peaked island
+            island->ctrlHeight[i] = randomPeakHeight(island) *
+                (0.3f + 0.7f * (1.0f - distanceToPeak / M_PI));
+            break;
+        case 2: // Flat-topped island
+            island->ctrlHeight[i] = randomPeakHeight(island) *
+                (0.8f - 0.2f * distanceToPeak / M_PI);
+            if (distanceToPeak < 0.3f) island->ctrlHeight[i] *= 1.1f;
+            break;
+        case 3: // Crater island
+            island->ctrlHeight[i] = randomPeakHeight(island) *
+                (0.5f + 0.5f * sinf(distanceToPeak * 3.0f));
+            break;
+        }
+
+        // Add some noise to break up patterns
+        island->ctrlHeight[i] *= 0.9f + 0.2f * ((float)rand() / RAND_MAX);
+    }
+
+    // Smooth the control points (less smoothing for more variation)
     for (int i = 0; i < NUM_CTRL_POINTS; ++i) {
         int prev = clampCtrlIndex(i - 1);
         int next = clampCtrlIndex(i + 1);
-        island->ctrlRadius[i] = (island->ctrlRadius[prev] + island->ctrlRadius[i] + island->ctrlRadius[next]) / 3.0f;
-        island->ctrlHeight[i] = (island->ctrlHeight[prev] + island->ctrlHeight[i] + island->ctrlHeight[next]) / 3.0f;
+        island->ctrlRadius[i] = (island->ctrlRadius[prev] + 2.0f * island->ctrlRadius[i] + island->ctrlRadius[next]) / 4.0f;
+        island->ctrlHeight[i] = (island->ctrlHeight[prev] + 2.0f * island->ctrlHeight[i] + island->ctrlHeight[next]) / 4.0f;
     }
 }
 
+// Get interpolated radius at angle theta
 static float getInterpolatedRadius(Island* island, float theta) {
     float t = theta / (2.0f * M_PI) * NUM_CTRL_POINTS;
     int i1 = (int)floorf(t);
@@ -98,6 +138,7 @@ static float getInterpolatedRadius(Island* island, float theta) {
         island->ctrlRadius[i2], island->ctrlRadius[i3], localT);
 }
 
+// Get interpolated height at angle theta
 static float getInterpolatedHeight(Island* island, float theta) {
     float t = theta / (2.0f * M_PI) * NUM_CTRL_POINTS;
     int i1 = (int)floorf(t);
@@ -112,35 +153,65 @@ static float getInterpolatedHeight(Island* island, float theta) {
         island->ctrlHeight[i2], island->ctrlHeight[i3], localT);
 }
 
+// Color based on height
 static void colorForHeight(Island* island, float height, float* r, float* g, float* b) {
-    float t = (height - island->position.y) / 3.0f;
+    // Define color transition thresholds in world-space Y-values
+    float bottomColorTop = 1.2f;  // height where bottom color ends
+    float middleColorTop = 4.5f;  // height where middle color ends
+
+    float y = height;
 
     switch (island->colorStyle) {
     case ISLAND_TROPICAL:
-        if (t < 0.2f) { *r = 0.95f; *g = 0.85f; *b = 0.6f; }
-        else if (t < 0.6f) { *r = 0.2f; *g = 0.7f; *b = 0.3f; }
-        else { *r = 0.0f; *g = 1.0f; *b = 0.0f; }
+        if (y < bottomColorTop) {
+            *r = 0.95f; *g = 0.85f; *b = 0.6f;  // Sand
+        }
+        else if (y < middleColorTop) {
+            *r = 0.2f; *g = 0.7f; *b = 0.3f;  // Grass
+        }
+        else {
+            *r = 0.0f; *g = 1.0f; *b = 0.0f;  // Bright green
+        }
         break;
     case ISLAND_VOLCANO:
-        if (t < 0.3f) { *r = 0.2f; *g = 0.1f; *b = 0.0f; }
-        else if (t < 0.6f) { *r = 0.3f; *g = 0.3f; *b = 0.3f; }
-        else { *r = 0.8f; *g = 0.2f; *b = 0.1f; }
+        if (y < bottomColorTop) {
+            *r = 0.2f; *g = 0.1f; *b = 0.0f;  // Dark brown
+        }
+        else if (y < middleColorTop) {
+            *r = 0.3f; *g = 0.3f; *b = 0.3f;  // Gray
+        }
+        else {
+            *r = 0.8f; *g = 0.2f; *b = 0.1f;  // Red
+        }
         break;
     case ISLAND_ARCTIC:
-        if (t < 0.3f) { *r = 0.8f; *g = 0.9f; *b = 1.0f; }
-        else if (t < 0.6f) { *r = 0.7f; *g = 0.8f; *b = 0.9f; }
-        else { *r = 0.4f; *g = 0.4f; *b = 0.5f; }
+        if (y < bottomColorTop) {
+            *r = 0.8f; *g = 0.9f; *b = 1.0f;  // Light blue
+        }
+        else if (y < middleColorTop) {
+            *r = 0.7f; *g = 0.8f; *b = 0.9f;  // Blue-gray
+        }
+        else {
+            *r = 0.6f; *g = 0.6f; *b = 1.0f;  // Dark gray
+        }
         break;
     }
 }
 
+
 void initIsland(Island* island, float baseRadius) {
     if (island->isInitialized) return;
 
+    // Seed RNG with unique value for each island
     unsigned int seed = (unsigned int)time(NULL) ^ (uintptr_t)island;
     srand(seed);
 
+    // More color style variation
     island->colorStyle = rand() % 3;
+    if (rand() % 5 == 0) { // 20% chance of special color style
+        island->colorStyle = rand() % 3; // Re-roll for more variation
+    }
+
     generateIslandShape(island, baseRadius);
 
     // Calculate number of vertices needed
@@ -160,56 +231,47 @@ void initIsland(Island* island, float baseRadius) {
             float cosPhi1 = cosf(phi1);
             float cosPhi2 = cosf(phi2);
 
+            // Calculate radius at each point
             float r11 = getInterpolatedRadius(island, theta1) * cosPhi1;
             float r12 = getInterpolatedRadius(island, theta2) * cosPhi1;
             float r22 = getInterpolatedRadius(island, theta2) * cosPhi2;
             float r21 = getInterpolatedRadius(island, theta1) * cosPhi2;
 
+            // Get height offsets
             float hOffset1 = getInterpolatedHeight(island, theta1);
             float hOffset2 = getInterpolatedHeight(island, theta2);
 
-            float baseHill1 = 2.0f * (1.0f - cosPhi1 * cosPhi1);
-            float baseHill2 = 2.0f * (1.0f - cosPhi2 * cosPhi2);
+            // Base shape is a hemisphere that flattens at the bottom
+            float baseShape1 = (1.0f - cosPhi1 * cosPhi1);  // Flatter at bottom
+            float baseShape2 = (1.0f - cosPhi2 * cosPhi2);
 
             // Vertex 1
-            ((IslandVertex*)island->vertices)[vertexIndex].position.x = island->position.x + r11 * cosf(theta1);
-            ((IslandVertex*)island->vertices)[vertexIndex].position.y = island->position.y + baseHill1 + hOffset1;
-            ((IslandVertex*)island->vertices)[vertexIndex].position.z = island->position.z + r11 * sinf(theta1);
-            colorForHeight(island, ((IslandVertex*)island->vertices)[vertexIndex].position.y,
-                &((IslandVertex*)island->vertices)[vertexIndex].r,
-                &((IslandVertex*)island->vertices)[vertexIndex].g,
-                &((IslandVertex*)island->vertices)[vertexIndex].b);
-            vertexIndex++;
+            IslandVertex* v = &((IslandVertex*)island->vertices)[vertexIndex++];
+            v->position.x = island->position.x + r11 * cosf(theta1);
+            v->position.y = island->position.y + baseShape1 * hOffset1;
+            v->position.z = island->position.z + r11 * sinf(theta1);
+            colorForHeight(island, v->position.y, &v->r, &v->g, &v->b);
 
             // Vertex 2
-            ((IslandVertex*)island->vertices)[vertexIndex].position.x = island->position.x + r12 * cosf(theta2);
-            ((IslandVertex*)island->vertices)[vertexIndex].position.y = island->position.y + baseHill1 + hOffset2;
-            ((IslandVertex*)island->vertices)[vertexIndex].position.z = island->position.z + r12 * sinf(theta2);
-            colorForHeight(island, ((IslandVertex*)island->vertices)[vertexIndex].position.y,
-                &((IslandVertex*)island->vertices)[vertexIndex].r,
-                &((IslandVertex*)island->vertices)[vertexIndex].g,
-                &((IslandVertex*)island->vertices)[vertexIndex].b);
-            vertexIndex++;
+            v = &((IslandVertex*)island->vertices)[vertexIndex++];
+            v->position.x = island->position.x + r12 * cosf(theta2);
+            v->position.y = island->position.y + baseShape1 * hOffset2;
+            v->position.z = island->position.z + r12 * sinf(theta2);
+            colorForHeight(island, v->position.y, &v->r, &v->g, &v->b);
 
             // Vertex 3
-            ((IslandVertex*)island->vertices)[vertexIndex].position.x = island->position.x + r22 * cosf(theta2);
-            ((IslandVertex*)island->vertices)[vertexIndex].position.y = island->position.y + baseHill2 + hOffset2;
-            ((IslandVertex*)island->vertices)[vertexIndex].position.z = island->position.z + r22 * sinf(theta2);
-            colorForHeight(island, ((IslandVertex*)island->vertices)[vertexIndex].position.y,
-                &((IslandVertex*)island->vertices)[vertexIndex].r,
-                &((IslandVertex*)island->vertices)[vertexIndex].g,
-                &((IslandVertex*)island->vertices)[vertexIndex].b);
-            vertexIndex++;
+            v = &((IslandVertex*)island->vertices)[vertexIndex++];
+            v->position.x = island->position.x + r22 * cosf(theta2);
+            v->position.y = island->position.y + baseShape2 * hOffset2;
+            v->position.z = island->position.z + r22 * sinf(theta2);
+            colorForHeight(island, v->position.y, &v->r, &v->g, &v->b);
 
             // Vertex 4
-            ((IslandVertex*)island->vertices)[vertexIndex].position.x = island->position.x + r21 * cosf(theta1);
-            ((IslandVertex*)island->vertices)[vertexIndex].position.y = island->position.y + baseHill2 + hOffset1;
-            ((IslandVertex*)island->vertices)[vertexIndex].position.z = island->position.z + r21 * sinf(theta1);
-            colorForHeight(island, ((IslandVertex*)island->vertices)[vertexIndex].position.y,
-                &((IslandVertex*)island->vertices)[vertexIndex].r,
-                &((IslandVertex*)island->vertices)[vertexIndex].g,
-                &((IslandVertex*)island->vertices)[vertexIndex].b);
-            vertexIndex++;
+            v = &((IslandVertex*)island->vertices)[vertexIndex++];
+            v->position.x = island->position.x + r21 * cosf(theta1);
+            v->position.y = island->position.y + baseShape2 * hOffset1;
+            v->position.z = island->position.z + r21 * sinf(theta1);
+            colorForHeight(island, v->position.y, &v->r, &v->g, &v->b);
 
             // Create collision triangles
             Triangle tri1 = {
@@ -302,6 +364,155 @@ bool checkIslandCollision(Island* island, Vec3 position, float radius) {
 
     return false;
 }
+
+
+/*
+
+Finds the three closest vertices to the player
+marks them with red cubes
+
+then draws a '2d' triangle connecting them (filled)
+red means no collision while green means collision (the player is in that area, not necessarity touching a vertex)
+*/
+void drawNearestTriangleToPlayer(Island* island, Vec3 playerPos, float playerRadius) {
+    if (!island || !island->vertices || island->numVertices < 3) return;
+
+    IslandVertex* verts = (IslandVertex*)island->vertices;
+
+    int closestIndices[3] = { 0, 1, 2 };
+    float closestDist = FLT_MAX;
+
+    // Find closest triangle by centroid distance
+    for (int i = 0; i < island->numVertices - 2; i += 3) {
+        Vec3 a = verts[i].position;
+        Vec3 b = verts[i + 1].position;
+        Vec3 c = verts[i + 2].position;
+
+        Vec3 centroid = {
+            (a.x + b.x + c.x) / 3.0f,
+            (a.y + b.y + c.y) / 3.0f,
+            (a.z + b.z + c.z) / 3.0f
+        };
+
+        float dx = playerPos.x - centroid.x;
+        float dy = playerPos.y - centroid.y;
+        float dz = playerPos.z - centroid.z;
+        float distSq = dx * dx + dy * dy + dz * dz;
+
+        if (distSq < closestDist) {
+            closestDist = distSq;
+            closestIndices[0] = i;
+            closestIndices[1] = i + 1;
+            closestIndices[2] = i + 2;
+        }
+    }
+
+    // Extract vertices of closest triangle
+    Vec3 v1 = verts[closestIndices[0]].position;
+    Vec3 v2 = verts[closestIndices[1]].position;
+    Vec3 v3 = verts[closestIndices[2]].position;
+
+    // Calculate centroid
+    Vec3 centroid = {
+        (v1.x + v2.x + v3.x) / 3.0f,
+        (v1.y + v2.y + v3.y) / 3.0f,
+        (v1.z + v2.z + v3.z) / 3.0f
+    };
+
+    // Vector from centroid to player
+    Vec3 dir = {
+        playerPos.x - centroid.x,
+        playerPos.y - centroid.y,
+        playerPos.z - centroid.z
+    };
+
+    // Normalize dir
+    float length = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    if (length > 0.0001f) {
+        dir.x /= length;
+        dir.y /= length;
+        dir.z /= length;
+    }
+    else {
+        // Avoid zero length direction
+        dir.x = 0.0f;
+        dir.y = 0.0f;
+        dir.z = 0.0f;
+    }
+
+    // Amount to offset triangle along dir vector
+    const float offsetAmount = 1.0f; // Adjust this value as needed
+
+    // Shifted vertices towards player
+    Vec3 triToward[3] = {
+        { v1.x + dir.x * offsetAmount, v1.y + dir.y * offsetAmount, v1.z + dir.z * offsetAmount },
+        { v2.x + dir.x * offsetAmount, v2.y + dir.y * offsetAmount, v2.z + dir.z * offsetAmount },
+        { v3.x + dir.x * offsetAmount, v3.y + dir.y * offsetAmount, v3.z + dir.z * offsetAmount }
+    };
+
+    // Shifted vertices away from player
+    Vec3 triAway[3] = {
+        { v1.x - dir.x * offsetAmount, v1.y - dir.y * offsetAmount, v1.z - dir.z * offsetAmount },
+        { v2.x - dir.x * offsetAmount, v2.y - dir.y * offsetAmount, v2.z - dir.z * offsetAmount },
+        { v3.x - dir.x * offsetAmount, v3.y - dir.y * offsetAmount, v3.z - dir.z * offsetAmount }
+    };
+
+    // Helper function to check collision with triangle (use your existing logic or a helper)
+    bool collidesToward = false;
+    bool collidesAway = false;
+
+    // Check collision helper — you can adapt your existing collision function for single triangle:
+    bool checkCollisionTriangle(Vec3 p, float radius, Vec3 t[3]) {
+        // Simple distance check from player position to triangle vertices and centroid (basic proxy)
+        for (int i = 0; i < 3; i++) {
+            float dx = p.x - t[i].x;
+            float dy = p.y - t[i].y;
+            float dz = p.z - t[i].z;
+            float distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq <= radius * radius) return true;
+        }
+        Vec3 center = {
+            (t[0].x + t[1].x + t[2].x) / 3.0f,
+            (t[0].y + t[1].y + t[2].y) / 3.0f,
+            (t[0].z + t[1].z + t[2].z) / 3.0f
+        };
+        float dx = p.x - center.x;
+        float dy = p.y - center.y;
+        float dz = p.z - center.z;
+        float distSq = dx * dx + dy * dy + dz * dz;
+        return distSq <= radius * radius * 1.2f * 1.2f;
+    }
+
+    collidesToward = checkCollisionTriangle(playerPos, playerRadius, triToward);
+    collidesAway = checkCollisionTriangle(playerPos, playerRadius, triAway);
+
+    bool colliding = collidesToward || collidesAway;
+
+    // Draw both triangles, green if colliding, red if not
+    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 3);
+    for (int i = 0; i < 3; i++) {
+        GX_Position3f32(triToward[i].x, triToward[i].y, triToward[i].z);
+        if (colliding)
+            GX_Color3f32(0.0f, 1.0f, 0.0f); // Green
+        else
+            GX_Color3f32(1.0f, 0.0f, 0.0f); // Red
+    }
+    GX_End();
+
+    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 3);
+    for (int i = 0; i < 3; i++) {
+        GX_Position3f32(triAway[i].x, triAway[i].y, triAway[i].z);
+        if (colliding)
+            GX_Color3f32(0.0f, 1.0f, 0.0f); // Green
+        else
+            GX_Color3f32(1.0f, 0.0f, 0.0f); // Red
+    }
+    GX_End();
+}
+
+
+
+
 
 void freeIslandResources(Island* island) {
     if (!island) return;

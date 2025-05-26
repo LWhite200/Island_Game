@@ -9,6 +9,11 @@ void initIslandManager(IslandManager* manager) {
     srand(time(NULL));
 }
 
+// Generate random float between min and max
+static float randomFloatMan(float min, float max) {
+    return min + (max - min) * ((float)rand() / RAND_MAX);
+}
+
 void regenerateIslands(IslandManager* manager) {
     // First properly free all existing islands
     for (int i = 0; i < manager->count; i++) {
@@ -19,6 +24,8 @@ void regenerateIslands(IslandManager* manager) {
         }
     }
     manager->count = 0;
+
+    float newRadius = randomFloatMan(ISLAND_MIN_RADIUS, ISLAND_MAX_RADIUS);
 
     // Create new islands at random positions with minimum distance
     for (int i = 0; i < 3; i++) {
@@ -36,7 +43,7 @@ void regenerateIslands(IslandManager* manager) {
                 float dx = x - manager->islands[j]->position.x;
                 float dz = z - manager->islands[j]->position.z;
                 float distSq = dx * dx + dz * dz;
-                if (distSq < (ISLAND_RADIUS * 4) * (ISLAND_RADIUS * 4)) {
+                if (distSq < (newRadius * 4) * (newRadius * 4)) {
                     validPosition = false;
                     break;
                 }
@@ -50,22 +57,24 @@ void regenerateIslands(IslandManager* manager) {
             }
         } while (!validPosition);
 
-        createIsland(manager, x, z, ISLAND_RADIUS);
+        createIsland(manager, x, z);
     }
 }
 
-Island* createIsland(IslandManager* manager, float x, float z, float radius) {
+Island* createIsland(IslandManager* manager, float x, float z) {
     if (manager->count >= MAX_ISLANDS) return NULL;
 
     Island* island = (Island*)calloc(1, sizeof(Island));
     if (!island) return NULL;
 
-    island->position.x = x;
-    island->position.y = 0.0f;
-    island->position.z = z;
-    island->radius = radius;
+    float randRadius = randomFloatMan(ISLAND_MIN_RADIUS, ISLAND_MAX_RADIUS);
 
-    initIsland(island, radius);
+    island->position.x = x;
+    island->position.y = -2.0f;
+    island->position.z = z;
+    island->radius = randRadius;
+
+    initIsland(island, randRadius);
 
     manager->islands[manager->count++] = island;
     return island;
@@ -91,6 +100,13 @@ bool checkAllIslandsCollision(IslandManager* manager, Vec3 position, float radiu
         }
     }
     return false;
+}
+
+void drawIslandHitArea(IslandManager* manager, Vec3 playerPos, float playerRadius) {
+
+    for (int i = 0; i < manager->count; i++) {
+        drawNearestTriangleToPlayer(manager->islands[i], playerPos, playerRadius);
+    }
 }
 
 void freeAllIslands(IslandManager* manager) {

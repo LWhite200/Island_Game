@@ -10,7 +10,178 @@
 #include "water.h"
 #include "island.h"
 #include "boat.h"
+#include "player.h"
 #include "manager.h"
+
+// Boat structure to hold boat-related data
+typedef struct {
+    guVector position;
+    float yaw;
+    float speed;
+    float radius;
+} Boat;
+
+// Player structure to hold player-related data
+typedef struct {
+    guVector position;
+    float yaw;
+    float speed;
+    float radius;
+} Player;
+
+// Camera structure to hold camera-related data
+typedef struct {
+    guVector position;
+    guVector up;
+    guVector look;
+    float followDistance;
+    float heightOffset;
+} Camera;
+
+// Initialize boat with default values
+void initBoat(Boat* boat) {
+    boat->position.x = 0.0f;
+    boat->position.y = 0.0f;
+    boat->position.z = 0.0f;
+    boat->yaw = 0.0f;
+    boat->speed = 0.2f;
+    boat->radius = 1.0f;
+}
+
+// Initialize player with default values
+void initPlayer(Player* player) {
+    player->position.x = 0.0f;
+    player->position.y = 0.0f;
+    player->position.z = 0.0f;
+    player->yaw = 0.0f;
+    player->speed = 0.2f;
+    player->radius = 1.0f;
+}
+
+// Initialize camera with default values
+void initCamera(Camera* camera) {
+    camera->position.x = 0.0f;
+    camera->position.y = 0.5f;
+    camera->position.z = 5.0f;
+    camera->up.x = 0.0f;
+    camera->up.y = 1.0f;
+    camera->up.z = 0.0f;
+    camera->look.x = 0.0f;
+    camera->look.y = 0.0f;
+    camera->look.z = 0.0f;
+    camera->followDistance = 5.0f;
+    camera->heightOffset = 0.5f;
+}
+
+// Update boat position based on input
+void updateBoat(Boat* boat, bool upp, bool down, bool left, bool right, float time, IslandManager* islandManager) {
+    if (upp) { // Move boat forward
+        float boatHeight = sinf((boat->position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+            cosf((boat->position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
+
+        Vec3 newPos = {
+            boat->position.x - sinf(boat->yaw) * boat->speed,
+            boatHeight,
+            boat->position.z + cosf(boat->yaw) * boat->speed
+        };
+
+        if (!checkAllIslandsCollision(islandManager, newPos, boat->radius)) {
+            boat->position.x = newPos.x;
+            boat->position.z = newPos.z;
+        }
+    }
+
+    if (down) { // Move boat backward
+        float boatHeight = sinf((boat->position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+            cosf((boat->position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
+
+        Vec3 newPos = {
+            boat->position.x + sinf(boat->yaw) * boat->speed,
+            boatHeight,
+            boat->position.z - cosf(boat->yaw) * boat->speed
+        };
+
+        if (!checkAllIslandsCollision(islandManager, newPos, boat->radius)) {
+            boat->position.x = newPos.x;
+            boat->position.z = newPos.z;
+        }
+    }
+
+    if (left) { // Turn boat left
+        boat->yaw -= 0.05f;
+    }
+
+    if (right) { // Turn boat right
+        boat->yaw += 0.05f;
+    }
+}
+
+// Update player position based on input (same as boat for now)
+void updatePlayer(Player* player, bool upp, bool down, bool left, bool right, float time, IslandManager* islandManager) {
+    if (upp) { // Move player forward
+        float playerHeight = sinf((player->position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+            cosf((player->position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
+
+        Vec3 newPos = {
+            player->position.x - sinf(player->yaw) * player->speed,
+            playerHeight,
+            player->position.z + cosf(player->yaw) * player->speed
+        };
+
+        if (!checkAllIslandsCollision(islandManager, newPos, player->radius)) {
+            player->position.x = newPos.x;
+            player->position.z = newPos.z;
+        }
+    }
+
+    if (down) { // Move player backward
+        float playerHeight = sinf((player->position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+            cosf((player->position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
+
+        Vec3 newPos = {
+            player->position.x + sinf(player->yaw) * player->speed,
+            playerHeight,
+            player->position.z - cosf(player->yaw) * player->speed
+        };
+
+        if (!checkAllIslandsCollision(islandManager, newPos, player->radius)) {
+            player->position.x = newPos.x;
+            player->position.z = newPos.z;
+        }
+    }
+
+    if (left) { // Turn player left
+        player->yaw -= 0.05f;
+    }
+
+    if (right) { // Turn player right
+        player->yaw += 0.05f;
+    }
+}
+
+// Update camera to follow either boat or player
+void updateCamera(Camera* camera, const Boat* boat, const Player* player, bool isPlayerActive) {
+    if (isPlayerActive) {
+        // Camera follows player
+        camera->position.x = player->position.x + sinf(player->yaw) * camera->followDistance;
+        camera->position.z = player->position.z - cosf(player->yaw) * camera->followDistance;
+
+        // Update the camera's look vector
+        camera->look.x = player->position.x + sinf(player->yaw) * 2.0f;
+        camera->look.y = player->position.y;
+        camera->look.z = player->position.z - cosf(player->yaw) * 2.0f;
+    }
+    else {
+        // Camera follows boat
+        camera->position.x = boat->position.x + sinf(boat->yaw) * camera->followDistance;
+        camera->position.z = boat->position.z - cosf(boat->yaw) * camera->followDistance;
+
+        // Update the camera's look vector
+        camera->look.x = boat->position.x + sinf(boat->yaw) * 2.0f;
+        camera->look.y = boat->position.y;
+        camera->look.z = boat->position.z - cosf(boat->yaw) * 2.0f;
+    }
+}
 
 int main(int argc, char** argv) {
     // Original main function code exactly as you wrote it
@@ -31,9 +202,9 @@ int main(int argc, char** argv) {
     initIslandManager(&islandManager);
 
     // Create some islands
-    createIsland(&islandManager, 0.0f, -15.0f, ISLAND_RADIUS);
-    createIsland(&islandManager, 20.0f, 10.0f, ISLAND_RADIUS);
-    createIsland(&islandManager, -15.0f, 20.0f, ISLAND_RADIUS);
+    createIsland(&islandManager, 0.0f, -15.0f);
+    createIsland(&islandManager, 20.0f, 10.0f);
+    createIsland(&islandManager, -15.0f, 20.0f);
 
     rmode = VIDEO_GetPreferredMode(NULL);
 
@@ -84,16 +255,18 @@ int main(int argc, char** argv) {
     GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
     GX_SetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
 
-    // Boat and camera setup
-    guVector boatPos = { 0.0f, 0.0f, 0.0f },  // Boat position
-        cam = { 0.0F, 0.5F, 5.0F },  // Camera position (behind and above boat)
-        up = { 0.0F, 1.0F, 0.0F },
-        look = { 0.0F, 0.0F, 0.0F };  // Camera looks at the boat
-    float boatYaw = 0.0f; // Boat's yaw (rotation around y-axis)
-    f32 boatSpeed = 0.2f; // Speed of boat movement
+    // Boat, player and camera setup
+    Boat boat;
+    Player player;
+    Camera camera;
+    initBoat(&boat);
+    initPlayer(&player);
+    initCamera(&camera);
+
+    bool isPlayerActive = false; // Start with boat active
 
     // Setup the initial view matrix
-    guLookAt(view, &cam, &up, &look);
+    guLookAt(view, &camera.position, &camera.up, &camera.look);
 
     // Setup our projection matrix (Perspective)
     f32 w = rmode->viWidth;
@@ -115,6 +288,33 @@ int main(int argc, char** argv) {
             regenerateIslands(&islandManager);
         }
 
+        // Handle B button press (switch between boat and player)
+        // Handle B button press (switch between boat and player)
+        if (PAD_ButtonsDown(0) & PAD_BUTTON_B) {
+            // When switching to player, check if boat is on land first
+            if (!isPlayerActive) {
+                Vec3 boatPos = {
+                    boat.position.x,
+                    sinf((boat.position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+                    cosf((boat.position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE,
+                    boat.position.z
+                };
+
+                if (checkAllIslandsCollision(&islandManager, boatPos, boat.radius)) {
+                    // Boat is on land, allow switching to player
+                    isPlayerActive = true;
+                    player.position = boat.position;
+                    player.yaw = boat.yaw;
+                }
+            }
+            else {
+                // Switching back to boat from player
+                isPlayerActive = false;
+                boat.position = player.position;
+                boat.yaw = player.yaw;
+            }
+        }
+
         const float threshold = 2.0f;
 
         bool left = false, right = false, upp = false, down = false;
@@ -126,62 +326,19 @@ int main(int argc, char** argv) {
         if (joystickY < -threshold) down = true;   // Down
         if (joystickY > threshold) upp = true;      // Up
 
-        // Boat movement using Wii remote buttons
-        // In the boat movement section, replace with:
-        if (upp) { // Move boat forward
-            float boatHeight = sinf((boatPos.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
-                cosf((boatPos.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
-
-            Vec3 newPos = {
-                boatPos.x - sinf(boatYaw) * boatSpeed,
-                boatHeight,
-                boatPos.z + cosf(boatYaw) * boatSpeed
-            };
-
-            if (!checkAllIslandsCollision(&islandManager, newPos, cRadius)) {
-                boatPos.x = newPos.x;
-                boatPos.z = newPos.z;
-            }
-
-            
+        // Update boat and camera
+        // Update either boat or player based on current mode
+        if (isPlayerActive) {
+            updatePlayer(&player, upp, down, left, right, time, &islandManager);
         }
-
-        if (down) { // Move boat backward
-            float boatHeight = sinf((boatPos.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
-                cosf((boatPos.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
-
-            Vec3 newPos = {
-                boatPos.x + sinf(boatYaw) * boatSpeed,
-                boatHeight,
-                boatPos.z - cosf(boatYaw) * boatSpeed
-            };
-
-            if (!checkAllIslandsCollision(&islandManager, newPos, cRadius)) {
-                
-            }
-            boatPos.x = newPos.x;
-            boatPos.z = newPos.z;
+        else {
+            updateBoat(&boat, upp, down, left, right, time, &islandManager);
         }
-
-        if (left) { // Turn boat left
-            boatYaw -= 0.05f;
-        }
-
-        if (right) { // Turn boat right
-            boatYaw += 0.05f;
-        }
-
-        // Camera follows the boat
-        cam.x = boatPos.x + sinf(boatYaw) * 5.0f;  // Camera stays behind the boat
-        cam.z = boatPos.z - cosf(boatYaw) * 5.0f;
-
-        // Update the camera's look vector based on the boat's position and yaw
-        look.x = boatPos.x + sinf(boatYaw) * 2.0f;
-        look.y = boatPos.y;
-        look.z = boatPos.z - cosf(boatYaw) * 2.0f;
+        // Update camera to follow the active entity
+        updateCamera(&camera, &boat, &player, isPlayerActive);
 
         // Recalculate the view matrix with the updated look-at point
-        guLookAt(view, &cam, &up, &look);
+        guLookAt(view, &camera.position, &camera.up, &camera.look);
 
 
 
@@ -211,10 +368,22 @@ int main(int argc, char** argv) {
         // Draw the island (spherical shape)
         drawAllIslands(&islandManager);  // Place island at the origin
 
+        if (isPlayerActive) {
+            drawIslandHitArea(&islandManager, (Vec3) { player.position.x, player.position.y, player.position.z }, player.radius);
+        }
+
         // Draw the boat in front of the player
-        float boatHeight = sinf((boatPos.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
-            cosf((boatPos.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
-        drawBoat(boatPos.x, boatHeight, boatPos.z, boatYaw);  // Boat position and yaw
+        // Draw both boat and player, but only show the active one
+        if (isPlayerActive) {
+            float playerHeight = sinf((player.position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+                cosf((player.position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
+            drawPlayer(player.position.x, playerHeight, player.position.z, player.yaw);
+        }
+        else {
+            float boatHeight = sinf((boat.position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+                cosf((boat.position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
+            drawBoat(boat.position.x, boatHeight, boat.position.z, boat.yaw);
+        }
 
         // Finalize drawing
         GX_DrawDone();

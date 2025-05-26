@@ -12,10 +12,11 @@ typedef struct {
 } IslandManager;
 
 void initIslandManager(IslandManager* manager);
-Island* createIsland(IslandManager* manager, float x, float z, float radius);
+Island* createIsland(IslandManager* manager, float x, float z);
 void drawAllIslands(IslandManager* manager);
 bool checkAllIslandsCollision(IslandManager* manager, Vec3 position, float radius);
 void freeAllIslands(IslandManager* manager);
 void regenerateIslands(IslandManager* manager);  // Add this line
+void drawIslandHitArea(IslandManager* manager, Vec3 playerPos, float playerRadius);
 
 #endif
