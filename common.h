@@ -9,8 +9,8 @@
 #define WAVE_FREQUENCY       0.3f
 #define WAVE_AMPLITUDE       0.25f
 
-#define ISLAND_MIN_RADIUS    5.0f
-#define ISLAND_MAX_RADIUS    55.0f
+#define ISLAND_MIN_RADIUS    10.0f
+#define ISLAND_MAX_RADIUS    70.0f
 #define ISLAND_MIN_HEIGHT    4.0f
 #define ISLAND_MAX_HEIGHT    18.0f
 #define ISLAND_FLATTENING    0.3f
@@ -21,6 +21,7 @@
 
 #define cRadius      1.0f
 
+// The bottom of the world islands
 #define BASE_Y       -0.5f
 
 #endif

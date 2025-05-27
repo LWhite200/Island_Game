@@ -1,5 +1,83 @@
 #include <gccore.h>
 #include <math.h>
+#include "boat.h"
+
+
+// Initialize boat with default values
+void initBoat(Boat* boat) {
+    boat->position.x = 0.0f;
+    boat->position.y = 0.0f;
+    boat->position.z = 0.0f;
+    boat->yaw = 0.0f;
+    boat->speed = 0.2f;
+    boat->radius = 1.0f;
+}
+
+// Update boat position based on input
+void updateBoat(Boat* boat, bool upp, bool down, bool left, bool right, float time, IslandManager* islandManager) {
+
+    // Compute wave height at boat's current position
+    float boatHeight = sinf((boat->position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
+        cosf((boat->position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
+
+    // Current position of the boat (for collision and indicator)
+    Vec3 curPos = {
+        boat->position.x,
+        boatHeight,
+        boat->position.z
+    };
+
+    // Forward and backward position for collision checking
+    Vec3 backwardPos = {
+        boat->position.x + sinf(boat->yaw) * boat->speed,
+        boatHeight,
+        boat->position.z - cosf(boat->yaw) * boat->speed
+    };
+
+    Vec3 forwardPos = {
+        boat->position.x - sinf(boat->yaw) * boat->speed,
+        boatHeight,
+        boat->position.z + cosf(boat->yaw) * boat->speed
+    };
+
+    // Collision checks
+    bool frontBlocked = checkAllIslandsCollision(islandManager, forwardPos, boat->radius);
+    bool currentlyBlocked = checkAllIslandsCollision(islandManager, curPos, boat->radius);
+    bool behindBlocked = checkAllIslandsCollision(islandManager, backwardPos, boat->radius);
+
+    // Show indicator if near island
+    if (frontBlocked || currentlyBlocked || behindBlocked) {
+        drawIndicator(curPos);
+    }
+
+    // Draw closest area where boat could collide with
+    if (frontBlocked && !currentlyBlocked) {
+        drawIslandHitArea(islandManager, forwardPos, boat->radius);
+    }
+    else {
+        drawIslandHitArea(islandManager, curPos, boat->radius);
+    }
+
+    // Movement
+    if (down && !behindBlocked) {
+        boat->position.x += sinf(boat->yaw) * boat->speed;
+        boat->position.z -= cosf(boat->yaw) * boat->speed;
+    }
+
+    if (upp && !frontBlocked) {
+        boat->position.x -= sinf(boat->yaw) * boat->speed;
+        boat->position.z += cosf(boat->yaw) * boat->speed;
+    }
+
+    // Rotation
+    if (left) {
+        boat->yaw -= 0.05f;
+    }
+
+    if (right) {
+        boat->yaw += 0.05f;
+    }
+}
 
 void drawBoat(float x, float y, float z, float yaw) {
     // Original boat drawing code exactly as you wrote it

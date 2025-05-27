@@ -103,10 +103,39 @@ bool checkAllIslandsCollision(IslandManager* manager, Vec3 position, float radiu
 }
 
 void drawIslandHitArea(IslandManager* manager, Vec3 playerPos, float playerRadius) {
+    if (!manager) return;
 
     for (int i = 0; i < manager->count; i++) {
         drawNearestTriangleToPlayer(manager->islands[i], playerPos, playerRadius);
     }
+}
+
+void drawIndicator(Vec3 position) {
+    float yOffset = 0.5f;         // Height above the position
+    float size = 0.5f;            // Size of the triangle
+
+    // Triangle will float above the position
+    float x = position.x;
+    float y = position.y + yOffset;
+    float z = position.z;
+
+    // Define 3 vertices of a triangle centered above the point
+    // These form a flat triangle pointing up in the XZ plane
+    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 3);
+
+    // Top vertex
+    GX_Position3f32(x, y + size, z);
+    GX_Color3f32(1.0f, 0.0f, 0.0f);
+
+    // Bottom-left vertex
+    GX_Position3f32(x - size, y, z);
+    GX_Color3f32(0.0f, 1.0f, 0.0f);
+
+    // Bottom-right vertex
+    GX_Position3f32(x + size, y, z);
+    GX_Color3f32(0.0f, 0.0f, 1.0f);
+
+    GX_End();
 }
 
 void freeAllIslands(IslandManager* manager) {

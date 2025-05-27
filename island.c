@@ -309,209 +309,245 @@ void drawIsland(Island* island) {
     }
 }
 
+
+// Helper function: Find closest point on triangle to a point
+static Vec3 closestPointOnTriangle(Vec3 p, Triangle tri) {
+    Vec3 a = tri.v1, b = tri.v2, c = tri.v3;
+
+    Vec3 ab = { b.x - a.x, b.y - a.y, b.z - a.z };
+    Vec3 ac = { c.x - a.x, c.y - a.y, c.z - a.z };
+    Vec3 ap = { p.x - a.x, p.y - a.y, p.z - a.z };
+
+    float d1 = ab.x * ap.x + ab.y * ap.y + ab.z * ap.z;
+    float d2 = ac.x * ap.x + ac.y * ap.y + ac.z * ap.z;
+
+    if (d1 <= 0.0f && d2 <= 0.0f) return a;
+
+    Vec3 bp = { p.x - b.x, p.y - b.y, p.z - b.z };
+    float d3 = ab.x * bp.x + ab.y * bp.y + ab.z * bp.z;
+    float d4 = ac.x * bp.x + ac.y * bp.y + ac.z * bp.z;
+    if (d3 >= 0.0f && d4 <= d3) return b;
+
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+        float v = d1 / (d1 - d3);
+        Vec3 result = {
+            a.x + v * ab.x,
+            a.y + v * ab.y,
+            a.z + v * ab.z
+        };
+        return result;
+    }
+
+    Vec3 cp = { p.x - c.x, p.y - c.y, p.z - c.z };
+    float d5 = ab.x * cp.x + ab.y * cp.y + ab.z * cp.z;
+    float d6 = ac.x * cp.x + ac.y * cp.y + ac.z * cp.z;
+    if (d6 >= 0.0f && d5 <= d6) return c;
+
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+        float w = d2 / (d2 - d6);
+        Vec3 result = {
+            a.x + w * ac.x,
+            a.y + w * ac.y,
+            a.z + w * ac.z
+        };
+        return result;
+    }
+
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+        float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        Vec3 result = {
+            b.x + w * (c.x - b.x),
+            b.y + w * (c.y - b.y),
+            b.z + w * (c.z - b.z)
+        };
+        return result;
+    }
+
+    float denom = 1.0f / (va + vb + vc);
+    float v = vb * denom;
+    float w = vc * denom;
+
+    Vec3 result = {
+        a.x + ab.x * v + ac.x * w,
+        a.y + ab.y * v + ac.y * w,
+        a.z + ab.z * v + ac.z * w
+    };
+    return result;
+}
+
+/**
+ * Checks if a sphere at `position` with radius `radius` collides with the island mesh.
+ * Uses the island's KD-tree to query nearby triangles for collision detection.
+ * 
+ * @param island Pointer to the Island struct containing geometry and KD-tree.
+ * @param position Center position of the sphere to test collision.
+ * @param radius Radius of the sphere.
+ * @return true if collision occurs, false otherwise.
+ */
 bool checkIslandCollision(Island* island, Vec3 position, float radius) {
+    // If KD-tree is not built yet, can't check collisions
     if (!island->kdTree) return false;
 
-    Triangle nearbyTris[16];
+    // Preallocate array to store nearby triangles
+    int triTotal = 64 * 2;  // Adjust this size depending on your expected density
+    Triangle nearbyTris[triTotal];
     int triCount = 0;
-    float collisionRadius = radius * 1.5f;
 
-    void collectCallback(const Triangle * tri) {
-        if (triCount < 16) {
+    // Collision search radius is doubled here to ensure some margin
+    float collisionRadius = radius * 2.0f;
+
+    // Callback function to collect triangles found in KD-tree query
+    void collectCallback(const Triangle* tri) {
+        if (triCount < triTotal) {
             nearbyTris[triCount++] = *tri;
         }
     }
 
-    kd_query_nearest(island->kdTree, position, collisionRadius * 2.0f, collectCallback);
+    // Query KD-tree for all triangles within collisionRadius of position
+    kd_query_nearest(island->kdTree, position, collisionRadius, collectCallback);
 
+    // For each nearby triangle, test actual collision against the sphere
     for (int i = 0; i < triCount; i++) {
         Triangle tri = nearbyTris[i];
-        float dx1 = position.x - tri.v1.x;
-        float dy1 = position.y - tri.v1.y;
-        float dz1 = position.z - tri.v1.z;
-        float distSq1 = dx1 * dx1 + dy1 * dy1 + dz1 * dz1;
 
-        float dx2 = position.x - tri.v2.x;
-        float dy2 = position.y - tri.v2.y;
-        float dz2 = position.z - tri.v2.z;
-        float distSq2 = dx2 * dx2 + dy2 * dy2 + dz2 * dz2;
+        // Find closest point on triangle to sphere center
+        Vec3 closest = closestPointOnTriangle(position, tri);
 
-        float dx3 = position.x - tri.v3.x;
-        float dy3 = position.y - tri.v3.y;
-        float dz3 = position.z - tri.v3.z;
-        float distSq3 = dx3 * dx3 + dy3 * dy3 + dz3 * dz3;
+        // Compute squared distance between sphere center and closest point
+        float dx = position.x - closest.x;
+        float dy = position.y - closest.y;
+        float dz = position.z - closest.z;
+        float distSq = dx * dx + dy * dy + dz * dz;
 
-        float minDistSq = fminf(fminf(distSq1, distSq2), distSq3);
-        if (minDistSq <= (radius * radius)) {
-            return true;
-        }
-
-        Vec3 center = {
-            (tri.v1.x + tri.v2.x + tri.v3.x) / 3.0f,
-            (tri.v1.y + tri.v2.y + tri.v3.y) / 3.0f,
-            (tri.v1.z + tri.v2.z + tri.v3.z) / 3.0f
-        };
-
-        float dxc = position.x - center.x;
-        float dyc = position.y - center.y;
-        float dzc = position.z - center.z;
-        float centerDistSq = dxc * dxc + dyc * dyc + dzc * dzc;
-
-        if (centerDistSq <= (radius * 1.2f * radius * 1.2f)) {
+        // If the distance is less than or equal to radius, collision occurs
+        if (distSq <= radius * radius) {
             return true;
         }
     }
 
+    // No collision found
     return false;
 }
 
 
 /*
 
-Finds the three closest vertices to the player
-marks them with red cubes
-
-then draws a '2d' triangle connecting them (filled)
-red means no collision while green means collision (the player is in that area, not necessarity touching a vertex)
+Draw red what the player is colliding with and make it 
+closer to player so it isn't inside the island/whatever
+red = no collision, green means collision
 */
-void drawNearestTriangleToPlayer(Island* island, Vec3 playerPos, float playerRadius) {
-    if (!island || !island->vertices || island->numVertices < 3) return;
-
-    IslandVertex* verts = (IslandVertex*)island->vertices;
-
-    int closestIndices[3] = { 0, 1, 2 };
-    float closestDist = FLT_MAX;
-
-    // Find closest triangle by centroid distance
-    for (int i = 0; i < island->numVertices - 2; i += 3) {
-        Vec3 a = verts[i].position;
-        Vec3 b = verts[i + 1].position;
-        Vec3 c = verts[i + 2].position;
-
-        Vec3 centroid = {
-            (a.x + b.x + c.x) / 3.0f,
-            (a.y + b.y + c.y) / 3.0f,
-            (a.z + b.z + c.z) / 3.0f
-        };
-
-        float dx = playerPos.x - centroid.x;
-        float dy = playerPos.y - centroid.y;
-        float dz = playerPos.z - centroid.z;
-        float distSq = dx * dx + dy * dy + dz * dz;
-
-        if (distSq < closestDist) {
-            closestDist = distSq;
-            closestIndices[0] = i;
-            closestIndices[1] = i + 1;
-            closestIndices[2] = i + 2;
-        }
-    }
-
-    // Extract vertices of closest triangle
-    Vec3 v1 = verts[closestIndices[0]].position;
-    Vec3 v2 = verts[closestIndices[1]].position;
-    Vec3 v3 = verts[closestIndices[2]].position;
-
-    // Calculate centroid
-    Vec3 centroid = {
-        (v1.x + v2.x + v3.x) / 3.0f,
-        (v1.y + v2.y + v3.y) / 3.0f,
-        (v1.z + v2.z + v3.z) / 3.0f
-    };
-
-    // Vector from centroid to player
-    Vec3 dir = {
-        playerPos.x - centroid.x,
-        playerPos.y - centroid.y,
-        playerPos.z - centroid.z
-    };
-
-    // Normalize dir
-    float length = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-    if (length > 0.0001f) {
-        dir.x /= length;
-        dir.y /= length;
-        dir.z /= length;
-    }
-    else {
-        // Avoid zero length direction
-        dir.x = 0.0f;
-        dir.y = 0.0f;
-        dir.z = 0.0f;
-    }
-
-    // Amount to offset triangle along dir vector
-    const float offsetAmount = 1.0f; // Adjust this value as needed
-
-    // Shifted vertices towards player
-    Vec3 triToward[3] = {
-        { v1.x + dir.x * offsetAmount, v1.y + dir.y * offsetAmount, v1.z + dir.z * offsetAmount },
-        { v2.x + dir.x * offsetAmount, v2.y + dir.y * offsetAmount, v2.z + dir.z * offsetAmount },
-        { v3.x + dir.x * offsetAmount, v3.y + dir.y * offsetAmount, v3.z + dir.z * offsetAmount }
-    };
-
-    // Shifted vertices away from player
-    Vec3 triAway[3] = {
-        { v1.x - dir.x * offsetAmount, v1.y - dir.y * offsetAmount, v1.z - dir.z * offsetAmount },
-        { v2.x - dir.x * offsetAmount, v2.y - dir.y * offsetAmount, v2.z - dir.z * offsetAmount },
-        { v3.x - dir.x * offsetAmount, v3.y - dir.y * offsetAmount, v3.z - dir.z * offsetAmount }
-    };
-
-    // Helper function to check collision with triangle (use your existing logic or a helper)
-    bool collidesToward = false;
-    bool collidesAway = false;
-
-    // Check collision helper — you can adapt your existing collision function for single triangle:
-    bool checkCollisionTriangle(Vec3 p, float radius, Vec3 t[3]) {
-        // Simple distance check from player position to triangle vertices and centroid (basic proxy)
-        for (int i = 0; i < 3; i++) {
-            float dx = p.x - t[i].x;
-            float dy = p.y - t[i].y;
-            float dz = p.z - t[i].z;
-            float distSq = dx * dx + dy * dy + dz * dz;
-            if (distSq <= radius * radius) return true;
-        }
-        Vec3 center = {
-            (t[0].x + t[1].x + t[2].x) / 3.0f,
-            (t[0].y + t[1].y + t[2].y) / 3.0f,
-            (t[0].z + t[1].z + t[2].z) / 3.0f
-        };
-        float dx = p.x - center.x;
-        float dy = p.y - center.y;
-        float dz = p.z - center.z;
-        float distSq = dx * dx + dy * dy + dz * dz;
-        return distSq <= radius * radius * 1.2f * 1.2f;
-    }
-
-    collidesToward = checkCollisionTriangle(playerPos, playerRadius, triToward);
-    collidesAway = checkCollisionTriangle(playerPos, playerRadius, triAway);
-
-    bool colliding = collidesToward || collidesAway;
-
-    // Draw both triangles, green if colliding, red if not
-    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 3);
-    for (int i = 0; i < 3; i++) {
-        GX_Position3f32(triToward[i].x, triToward[i].y, triToward[i].z);
-        if (colliding)
-            GX_Color3f32(0.0f, 1.0f, 0.0f); // Green
-        else
-            GX_Color3f32(1.0f, 0.0f, 0.0f); // Red
-    }
-    GX_End();
-
-    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 3);
-    for (int i = 0; i < 3; i++) {
-        GX_Position3f32(triAway[i].x, triAway[i].y, triAway[i].z);
-        if (colliding)
-            GX_Color3f32(0.0f, 1.0f, 0.0f); // Green
-        else
-            GX_Color3f32(1.0f, 0.0f, 0.0f); // Red
-    }
-    GX_End();
+// Helper function: Clamp a value between 0 and 1
+static float clamp01(float x) {
+    return (x < 0) ? 0 : (x > 1) ? 1 : x;
 }
 
+void drawNearestTriangleToPlayer(Island* island, Vec3 playerPos, float playerRadius) {
+    if (!island || !island->kdTree) return;
 
+    Triangle nearestTri;
+    bool found = false;
+    float nearestDistSq = FLT_MAX;
 
+    void findNearestCallback(const Triangle * tri) {
+        // Compute full 3D center of triangle
+        Vec3 center = {
+            (tri->v1.x + tri->v2.x + tri->v3.x) / 3.0f,
+            (tri->v1.y + tri->v2.y + tri->v3.y) / 3.0f,
+            (tri->v1.z + tri->v2.z + tri->v3.z) / 3.0f
+        };
+
+        float dx = playerPos.x - center.x;
+        float dy = playerPos.y - center.y;
+        float dz = playerPos.z - center.z;
+        float distSq = dx * dx + dy * dy + dz * dz;
+
+        if (distSq < nearestDistSq) {
+            nearestDistSq = distSq;
+            nearestTri = *tri;
+            found = true;
+        }
+    }
+
+    kd_query_nearest(island->kdTree, playerPos, playerRadius * 3.0f, findNearestCallback);
+    if (!found) return;
+
+    // Compute closest point on nearest triangle to player
+    Vec3 closestPoint = closestPointOnTriangle(playerPos, nearestTri);
+
+    // Compute triangle normal
+    Vec3 u = {
+        nearestTri.v2.x - nearestTri.v1.x,
+        nearestTri.v2.y - nearestTri.v1.y,
+        nearestTri.v2.z - nearestTri.v1.z
+    };
+    Vec3 v = {
+        nearestTri.v3.x - nearestTri.v1.x,
+        nearestTri.v3.y - nearestTri.v1.y,
+        nearestTri.v3.z - nearestTri.v1.z
+    };
+    Vec3 normal = {
+        u.y * v.z - u.z * v.y,
+        u.z * v.x - u.x * v.z,
+        u.x * v.y - u.y * v.x
+    };
+    float length = sqrtf(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+    if (length > 0.0f) {
+        normal.x /= length;
+        normal.y /= length;
+        normal.z /= length;
+    }
+    else {
+        normal = (Vec3){ 0,1,0 }; // fallback normal
+    }
+
+    // Offset cube slightly above the triangle surface (along normal)
+    float offsetDist = 0.1f;
+    Vec3 cubeCenter = {
+        closestPoint.x + normal.x * offsetDist,
+        closestPoint.y + normal.y * offsetDist,
+        closestPoint.z + normal.z * offsetDist
+    };
+
+    // Color based on actual collision
+    bool collision = checkIslandCollision(island, playerPos, playerRadius);
+    float r = collision ? 0.0f : 1.0f;
+    float g = collision ? 1.0f : 0.0f;
+    float b = 0.0f;
+
+    // Draw small cube at cubeCenter
+    float halfSize = 0.1f;
+
+    static const int faceIndices[6][4] = {
+        {0, 1, 2, 3}, // front
+        {4, 5, 6, 7}, // back
+        {0, 1, 5, 4}, // bottom
+        {2, 3, 7, 6}, // top
+        {1, 2, 6, 5}, // right
+        {0, 3, 7, 4}  // left
+    };
+
+    static const Vec3 offsets[8] = {
+        {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
+        {-1, -1, 1},  {1, -1, 1},  {1, 1, 1},  {-1, 1, 1}
+    };
+
+    for (int i = 0; i < 6; i++) {
+        GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
+        for (int j = 0; j < 4; ++j) {
+            Vec3 o = offsets[faceIndices[i][j]];
+            GX_Position3f32(
+                cubeCenter.x + o.x * halfSize,
+                cubeCenter.y + o.y * halfSize,
+                cubeCenter.z + o.z * halfSize
+            );
+            GX_Color3f32(r, g, b);
+        }
+        GX_End();
+    }
+}
 
 // Simply frees the memory
 void freeIslandResources(Island* island) {

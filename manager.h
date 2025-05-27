@@ -17,6 +17,7 @@ void drawAllIslands(IslandManager* manager);
 bool checkAllIslandsCollision(IslandManager* manager, Vec3 position, float radius);
 void freeAllIslands(IslandManager* manager);
 void regenerateIslands(IslandManager* manager);  // Add this line
+void drawIndicator(Vec3 position);
 void drawIslandHitArea(IslandManager* manager, Vec3 playerPos, float playerRadius);
 
 #endif

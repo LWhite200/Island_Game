@@ -1,5 +1,102 @@
 #include <gccore.h>
 #include <math.h>
+#include "player.h"
+
+
+// Initialize player with default values
+void initPlayer(Player* player) {
+    player->position.x = 0.0f;
+    player->position.y = 0.0f;
+    player->position.z = 0.0f;
+    player->yaw = 0.0f;
+    player->speed = 0.2f;
+    player->radius = 0.25f;
+    player->gravity = 0.09;
+    player->upPush = 0.001; // when they are in the ground, push up until slightly not
+}
+
+// Update player position based on input (same as boat for now)
+void updatePlayer(Player* player, bool upp, bool down, bool left, bool right, float time, IslandManager* islandManager) {
+
+    // Current position of the player (for collision and indicator)
+    Vec3 curPos = {
+        player->position.x,
+        player->position.y,
+        player->position.z
+    };
+
+    // Forward and backward position for collision checking
+    Vec3 backwardPos = {
+        player->position.x + sinf(player->yaw) * player->speed,
+        player->position.y,
+        player->position.z - cosf(player->yaw) * player->speed
+    };
+
+    Vec3 forwardPos = {
+        player->position.x - sinf(player->yaw) * player->speed,
+        player->position.y,
+        player->position.z + cosf(player->yaw) * player->speed
+    };
+
+    // Collision checks
+    bool frontBlocked = checkAllIslandsCollision(islandManager, forwardPos, player->radius);
+    bool currentlyBlocked = checkAllIslandsCollision(islandManager, curPos, player->radius);
+    bool behindBlocked = checkAllIslandsCollision(islandManager, backwardPos, player->radius);
+
+    // Show indicator if near island
+    if (frontBlocked || currentlyBlocked || behindBlocked) {
+        drawIndicator(curPos);
+    }
+
+    // Draw closest area where player could collide with
+    if (frontBlocked && !currentlyBlocked) {
+        drawIslandHitArea(islandManager, forwardPos, player->radius);
+    }
+    else {
+        drawIslandHitArea(islandManager, curPos, player->radius);
+    }
+
+    // Movement
+    if (down) {
+        player->position.x += sinf(player->yaw) * player->speed;
+        player->position.z -= cosf(player->yaw) * player->speed;
+    }
+
+    if (upp) {
+        player->position.x -= sinf(player->yaw) * player->speed;
+        player->position.z += cosf(player->yaw) * player->speed;
+    }
+
+    // Rotation
+    if (left) {
+        player->yaw -= 0.05f;
+    }
+
+    if (right) {
+        player->yaw += 0.05f;
+    }
+
+    Vec3 belowPos = {
+        player->position.x - sinf(player->yaw) * player->speed,
+        player->position.y - player->gravity,
+        player->position.z + cosf(player->yaw) * player->speed
+    };
+
+    bool belowBlocked = checkAllIslandsCollision(islandManager, belowPos, player->radius);
+
+    if (!belowBlocked) {
+        player->position.y -= player->gravity;
+        if (player->position.y <= -2.0) {
+            player->position.y = -2.0;
+        }
+    }
+    else {
+        while (checkAllIslandsCollision(islandManager, belowPos, player->radius)) {
+            belowPos.y += player->upPush;
+        }
+        player->position.y = belowPos.y;
+    }
+}
 
 // Easy-to-modify color (RGB)
 static float playerColor[3] = { 0.2f, 1.0f, 0.2f };  // Light green
