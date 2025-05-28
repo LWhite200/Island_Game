@@ -12,69 +12,7 @@
 #include "boat.h"
 #include "player.h"
 #include "manager.h"
-
-
-
-
-
-
-
-// Camera structure to hold camera-related data
-typedef struct {
-    guVector position;
-    guVector up;
-    guVector look;
-    float followDistance;
-    float heightOffset;
-} Camera;
-
-
-
-
-
-// Initialize camera with default values
-void initCamera(Camera* camera) {
-    camera->position.x = 0.0f;
-    camera->position.y = 0.5f;
-    camera->position.z = 5.0f;
-    camera->up.x = 0.0f;
-    camera->up.y = 1.0f;
-    camera->up.z = 0.0f;
-    camera->look.x = 0.0f;
-    camera->look.y = 0.0f;
-    camera->look.z = 0.0f;
-    camera->followDistance = 5.0f;
-    camera->heightOffset = 0.5f;
-}
-
-
-
-
-
-// Update camera to follow either boat or player
-void updateCamera(Camera* camera, const Boat* boat, const Player* player, bool isPlayerActive) {
-    if (isPlayerActive) {
-        // Camera follows player
-        camera->position.x = player->position.x + sinf(player->yaw) * camera->followDistance;
-        camera->position.y = player->position.y;
-        camera->position.z = player->position.z - cosf(player->yaw) * camera->followDistance;
-
-        // Update the camera's look vector
-        camera->look.x = player->position.x + sinf(player->yaw) * 2.0f;
-        camera->look.y = player->position.y;
-        camera->look.z = player->position.z - cosf(player->yaw) * 2.0f;
-    }
-    else {
-        // Camera follows boat
-        camera->position.x = boat->position.x + sinf(boat->yaw) * camera->followDistance;
-        camera->position.z = boat->position.z - cosf(boat->yaw) * camera->followDistance;
-
-        // Update the camera's look vector
-        camera->look.x = boat->position.x + sinf(boat->yaw) * 2.0f;
-        camera->look.y = boat->position.y;
-        camera->look.z = boat->position.z - cosf(boat->yaw) * 2.0f;
-    }
-}
+#include "camera.h"
 
 int main(int argc, char** argv) {
     // Original main function code exactly as you wrote it
@@ -94,9 +32,8 @@ int main(int argc, char** argv) {
     initIslandManager(&islandManager);
 
     // Create some islands
-    createIsland(&islandManager, 0.0f, -15.0f);
-    createIsland(&islandManager, 20.0f, 10.0f);
-    createIsland(&islandManager, -15.0f, 20.0f);
+
+    regenerateIslands(&islandManager);
 
     rmode = VIDEO_GetPreferredMode(NULL);
 
@@ -200,9 +137,14 @@ int main(int argc, char** argv) {
                 }
             }
             else {
-                // Switching back to boat from player
-                isPlayerActive = false;
-                initCamera(&camera); // reset it
+                if (player.position.y <= boatChangeY) {
+                    // Switching back to boat from player
+                    boat.position = player.position;
+                    boat.yaw = player.yaw;
+                    boat.position.y = 0.0f;
+                    isPlayerActive = false;
+                    initCamera(&camera); // reset it
+                }
             }
         }
 
@@ -226,7 +168,7 @@ int main(int argc, char** argv) {
             updateBoat(&boat, upp, down, left, right, time, &islandManager);
         }
         // Update camera to follow the active entity
-        updateCamera(&camera, &boat, &player, isPlayerActive);
+        updateCamera(&camera, &boat, &player, isPlayerActive, &islandManager);
 
         // Recalculate the view matrix with the updated look-at point
         guLookAt(view, &camera.position, &camera.up, &camera.look);

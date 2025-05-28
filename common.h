@@ -12,9 +12,10 @@
 #define ISLAND_MIN_RADIUS    10.0f
 #define ISLAND_MAX_RADIUS    70.0f
 #define ISLAND_MIN_HEIGHT    4.0f
-#define ISLAND_MAX_HEIGHT    18.0f
+#define ISLAND_MAX_HEIGHT    10.0f
 #define ISLAND_FLATTENING    0.3f
 
+#define numIslands           1
 
 #define JOYSTICK_DEADZONE    15
 #define MAX_JOYSTICK_VALUE   70
@@ -23,5 +24,6 @@
 
 // The bottom of the world islands
 #define BASE_Y       -0.5f
+#define boatChangeY   0.5f
 
 #endif

@@ -392,12 +392,15 @@ bool checkIslandCollision(Island* island, Vec3 position, float radius) {
     if (!island->kdTree) return false;
 
     // Preallocate array to store nearby triangles
-    int triTotal = 64 * 2;  // Adjust this size depending on your expected density
+    int triTotal = 32;  // Adjust this size depending on your expected density
     Triangle nearbyTris[triTotal];
     int triCount = 0;
 
+    // Smaller objects break the math, so pretend the objects have radius = 1
+    float workingRadius = 1.0f;
+
     // Collision search radius is doubled here to ensure some margin
-    float collisionRadius = radius * 2.0f;
+    float collisionRadius = workingRadius * 2.0f;
 
     // Callback function to collect triangles found in KD-tree query
     void collectCallback(const Triangle* tri) {
@@ -423,13 +426,113 @@ bool checkIslandCollision(Island* island, Vec3 position, float radius) {
         float distSq = dx * dx + dy * dy + dz * dz;
 
         // If the distance is less than or equal to radius, collision occurs
-        if (distSq <= radius * radius) {
-            return true;
+        // See if in the actual radius
+        if (radius >= 1) {
+            if (distSq <= radius * radius) {
+                return true;
+            }
         }
+        else {
+            if (distSq <= radius) {
+                return true;
+            }
+        }
+        
     }
 
     // No collision found
     return false;
+}
+
+// Helper: normalize a vector
+static Vec3 normalize(Vec3 v) {
+    float len = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+    return (Vec3) { v.x / len, v.y / len, v.z / len };
+}
+
+// Helper: subtract two vectors
+static Vec3 subtract(Vec3 a, Vec3 b) {
+    return (Vec3) { a.x - b.x, a.y - b.y, a.z - b.z };
+}
+
+// Helper: dot product
+static float dot(Vec3 a, Vec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+// Helper: cross product
+static Vec3 cross(Vec3 a, Vec3 b) {
+    return (Vec3) {
+        a.y* b.z - a.z * b.y,
+            a.z* b.x - a.x * b.z,
+            a.x* b.y - a.y * b.x
+    };
+}
+
+// Ray-triangle intersection (Möller–Trumbore algorithm)
+static bool ray_intersects_triangle(Vec3 orig, Vec3 dir, const Triangle* tri, float maxDist) {
+    const float EPSILON = 1e-6f;
+    Vec3 v0v1 = subtract(tri->v2, tri->v1);
+    Vec3 v0v2 = subtract(tri->v3, tri->v1);
+    Vec3 pvec = cross(dir, v0v2);
+    float det = dot(v0v1, pvec);
+
+    if (fabsf(det) < EPSILON) return false;
+
+    float invDet = 1.0f / det;
+    Vec3 tvec = subtract(orig, tri->v1);
+    float u = dot(tvec, pvec) * invDet;
+    if (u < 0 || u > 1) return false;
+
+    Vec3 qvec = cross(tvec, v0v1);
+    float v = dot(dir, qvec) * invDet;
+    if (v < 0 || u + v > 1) return false;
+
+    float t = dot(v0v2, qvec) * invDet;
+    return (t > EPSILON && t < maxDist);
+}
+
+// Context for KD-tree callback
+typedef struct {
+    Vec3 origin;
+    Vec3 direction;
+    float maxDist;
+    bool blocked;
+} RayCheckContext;
+
+// Static callback wrapper
+static RayCheckContext* ray_context = NULL;
+
+static void ray_query_callback(const Triangle* tri) {
+    if (ray_intersects_triangle(ray_context->origin, ray_context->direction, tri, ray_context->maxDist)) {
+        ray_context->blocked = true;
+    }
+}
+
+bool cameraCoveredCheck(Vec3 cameraPos, Vec3 playerPos, Island* island) {
+    if (!island || !island->kdTree) return false;
+
+    Vec3 dir = subtract(playerPos, cameraPos);
+    float distance = sqrtf(dot(dir, dir));
+    dir = normalize(dir);
+
+    RayCheckContext context = {
+        .origin = cameraPos,
+        .direction = dir,
+        .maxDist = distance,
+        .blocked = false
+    };
+
+    ray_context = &context;
+
+    // Use a query radius slightly larger than the ray width
+    float queryRadius = 1.0f;
+
+    kd_query_nearest(island->kdTree, cameraPos, distance, ray_query_callback);
+
+    ray_context = NULL;
+
+    return context.blocked;
 }
 
 
@@ -548,6 +651,8 @@ void drawNearestTriangleToPlayer(Island* island, Vec3 playerPos, float playerRad
         GX_End();
     }
 }
+
+
 
 // Simply frees the memory
 void freeIslandResources(Island* island) {

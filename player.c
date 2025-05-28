@@ -9,10 +9,10 @@ void initPlayer(Player* player) {
     player->position.y = 0.0f;
     player->position.z = 0.0f;
     player->yaw = 0.0f;
-    player->speed = 0.2f;
-    player->radius = 0.25f;
-    player->gravity = 0.09;
-    player->upPush = 0.001; // when they are in the ground, push up until slightly not
+    player->speed = 0.075f;
+    player->radius = 0.2f;
+    player->gravity = 0.15;
+    player->upPush = 0.0075; // when they are in the ground, push up until slightly not
 }
 
 // Update player position based on input (same as boat for now)
@@ -25,13 +25,6 @@ void updatePlayer(Player* player, bool upp, bool down, bool left, bool right, fl
         player->position.z
     };
 
-    // Forward and backward position for collision checking
-    Vec3 backwardPos = {
-        player->position.x + sinf(player->yaw) * player->speed,
-        player->position.y,
-        player->position.z - cosf(player->yaw) * player->speed
-    };
-
     Vec3 forwardPos = {
         player->position.x - sinf(player->yaw) * player->speed,
         player->position.y,
@@ -41,12 +34,9 @@ void updatePlayer(Player* player, bool upp, bool down, bool left, bool right, fl
     // Collision checks
     bool frontBlocked = checkAllIslandsCollision(islandManager, forwardPos, player->radius);
     bool currentlyBlocked = checkAllIslandsCollision(islandManager, curPos, player->radius);
-    bool behindBlocked = checkAllIslandsCollision(islandManager, backwardPos, player->radius);
+    // bool behindBlocked = checkAllIslandsCollision(islandManager, backwardPos, player->radius);
 
-    // Show indicator if near island
-    if (frontBlocked || currentlyBlocked || behindBlocked) {
-        drawIndicator(curPos);
-    }
+    
 
     // Draw closest area where player could collide with
     if (frontBlocked && !currentlyBlocked) {
@@ -95,6 +85,11 @@ void updatePlayer(Player* player, bool upp, bool down, bool left, bool right, fl
             belowPos.y += player->upPush;
         }
         player->position.y = belowPos.y;
+    }
+
+    // Show indicator if near island
+    if (player->position.y <= boatChangeY) {
+        drawIndicator(curPos);
     }
 }
 

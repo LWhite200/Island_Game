@@ -19,5 +19,6 @@ void freeAllIslands(IslandManager* manager);
 void regenerateIslands(IslandManager* manager);  // Add this line
 void drawIndicator(Vec3 position);
 void drawIslandHitArea(IslandManager* manager, Vec3 playerPos, float playerRadius);
+bool checkCameraPlayerCovered(Vec3 cameraPos, Vec3 playerPos, IslandManager* manager);
 
 #endif

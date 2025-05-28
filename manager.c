@@ -28,7 +28,7 @@ void regenerateIslands(IslandManager* manager) {
     float newRadius = randomFloatMan(ISLAND_MIN_RADIUS, ISLAND_MAX_RADIUS);
 
     // Create new islands at random positions with minimum distance
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < numIslands; i++) {
         float x, z;
         bool validPosition;
         int attempts = 0;
@@ -138,6 +138,19 @@ void drawIndicator(Vec3 position) {
     GX_End();
 }
 
+// Determines if there is anything between the player and the camera
+bool checkCameraPlayerCovered(Vec3 cameraPos, Vec3 playerPos, IslandManager* manager) {
+    if (!manager) return false;
+
+    for (int i = 0; i < manager->count; i++) {
+        if (cameraCoveredCheck(cameraPos, playerPos, manager->islands[i])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void freeAllIslands(IslandManager* manager) {
     for (int i = 0; i < manager->count; i++) {
         if (manager->islands[i]) {
@@ -148,3 +161,4 @@ void freeAllIslands(IslandManager* manager) {
     }
     manager->count = 0;
 }
+
