@@ -12,7 +12,9 @@
 #include "boat.h"
 #include "player.h"
 #include "manager.h"
+#include "bodyManager.h"
 #include "camera.h"
+
 
 int main(int argc, char** argv) {
     // Original main function code exactly as you wrote it
@@ -29,11 +31,13 @@ int main(int argc, char** argv) {
     PAD_Init();
 
     IslandManager islandManager;
+    BodyManager bodyManager;
+
     initIslandManager(&islandManager);
-
-    // Create some islands
-
     regenerateIslands(&islandManager);
+
+    initBodyManager(&bodyManager);
+    spawnBodiesOnIslands(&bodyManager, &islandManager);
 
     rmode = VIDEO_GetPreferredMode(NULL);
 
@@ -194,19 +198,27 @@ int main(int argc, char** argv) {
         time += WAVE_SPEED;
         // Resets time variable so no overflow
 
-        // Draw the island (spherical shape)
-        drawAllIslands(&islandManager);  // Place island at the origin
+        
 
         // Draw the boat in front of the player
         // Draw both boat and player, but only show the active one
         if (isPlayerActive) {
             drawPlayer(player.position.x, player.position.y, player.position.z, player.yaw);
+            Vec3 playerPos = { .x = 0.0f, .y = 0.0f, .z = 0.0f };
+            playerPos.x = player.position.x;
+            playerPos.y = player.position.y;
+            playerPos.z = player.position.z;
+            updateBodies(&bodyManager, &islandManager, playerPos);
         }
         else {
             float boatHeight = sinf((boat.position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE +
                 cosf((boat.position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
             drawBoat(boat.position.x, boatHeight, boat.position.z, boat.yaw);
         }
+
+        
+        drawAllIslands(&islandManager);
+        drawBodies(&bodyManager);
 
         // Finalize drawing
         GX_DrawDone();

@@ -17,10 +17,8 @@
 
 #define numIslands           1
 
-#define JOYSTICK_DEADZONE    15
+#define JOYSTICK_DEADZONE    40
 #define MAX_JOYSTICK_VALUE   70
-
-#define cRadius      1.0f
 
 // The bottom of the world islands
 #define BASE_Y       -0.5f

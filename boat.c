@@ -50,14 +50,6 @@ void updateBoat(Boat* boat, bool upp, bool down, bool left, bool right, float ti
         drawIndicator(curPos);
     }
 
-    // Draw closest area where boat could collide with
-    if (frontBlocked && !currentlyBlocked) {
-        drawIslandHitArea(islandManager, forwardPos, boat->radius);
-    }
-    else {
-        drawIslandHitArea(islandManager, curPos, boat->radius);
-    }
-
     // Movement
     if (down && !behindBlocked) {
         boat->position.x += sinf(boat->yaw) * boat->speed;

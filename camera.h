@@ -18,6 +18,8 @@ typedef struct {
     float minZoom;
     float maxZoom;
     float zoomSpeed;
+
+    float smoothingSpeed;  // Smoothing factor (e.g., 0.1f)
 } Camera;
 
 

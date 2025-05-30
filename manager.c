@@ -102,14 +102,6 @@ bool checkAllIslandsCollision(IslandManager* manager, Vec3 position, float radiu
     return false;
 }
 
-void drawIslandHitArea(IslandManager* manager, Vec3 playerPos, float playerRadius) {
-    if (!manager) return;
-
-    for (int i = 0; i < manager->count; i++) {
-        drawNearestTriangleToPlayer(manager->islands[i], playerPos, playerRadius);
-    }
-}
-
 void drawIndicator(Vec3 position) {
     float yOffset = 0.5f;         // Height above the position
     float size = 0.5f;            // Size of the triangle
@@ -136,6 +128,21 @@ void drawIndicator(Vec3 position) {
     GX_Color3f32(0.0f, 0.0f, 1.0f);
 
     GX_End();
+}
+
+// Find the y position of the triangle the person/body is ontop of 
+float islandGroundHeight(IslandManager* manager, Vec3 position, float radius) {
+    if (!manager) return BASE_Y;
+
+    float lowest = position.y;
+
+    for (int i = 0; i < manager->count; i++) {
+        float triHeight = getIslandTriangleHeight(manager->islands[i], position, radius);
+        if (triHeight < lowest) {
+            lowest = triHeight;
+        }
+    }
+    return lowest;
 }
 
 // Determines if there is anything between the player and the camera

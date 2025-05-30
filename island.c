@@ -154,49 +154,61 @@ static float getInterpolatedHeight(Island* island, float theta) {
 }
 
 // Color based on height
+// Enhanced Color based on height
 static void colorForHeight(Island* island, float height, float* r, float* g, float* b) {
-    // Define color transition thresholds in world-space Y-values
-    float bottomColorTop = 1.2f;  // height where bottom color ends
-    float middleColorTop = 4.5f;  // height where middle color ends
+    // Define color transition thresholds
+    float sandTop = 1.2f;
+    float grassTop = 2.5f;
+    float forestTop = 4.5f;
+    float rockTop = 6.0f;
 
     float y = height;
 
     switch (island->colorStyle) {
     case ISLAND_TROPICAL:
-        if (y < bottomColorTop) {
-            *r = 0.95f; *g = 0.85f; *b = 0.6f;  // Sand
-        }
-        else if (y < middleColorTop) {
-            *r = 0.2f; *g = 0.7f; *b = 0.3f;  // Grass
-        }
-        else {
-            *r = 0.0f; *g = 1.0f; *b = 0.0f;  // Bright green
+        if (y < sandTop) {
+            *r = 0.96f; *g = 0.87f; *b = 0.65f;  // Light sand
+        } else if (y < grassTop) {
+            *r = 0.4f; *g = 0.8f; *b = 0.4f;     // Lush green
+        } else if (y < forestTop) {
+            *r = 0.1f; *g = 0.5f; *b = 0.1f;     // Jungle green
+        } else if (y < rockTop) {
+            *r = 0.3f; *g = 0.3f; *b = 0.2f;     // Rocky upper terrain
+        } else {
+            *r = 0.6f; *g = 0.6f; *b = 0.6f;     // Exposed stone
         }
         break;
+
     case ISLAND_VOLCANO:
-        if (y < bottomColorTop) {
-            *r = 0.2f; *g = 0.1f; *b = 0.0f;  // Dark brown
-        }
-        else if (y < middleColorTop) {
-            *r = 0.3f; *g = 0.3f; *b = 0.3f;  // Gray
-        }
-        else {
-            *r = 0.8f; *g = 0.2f; *b = 0.1f;  // Red
+        if (y < sandTop) {
+            *r = 0.25f; *g = 0.15f; *b = 0.05f;  // Ashy brown
+        } else if (y < grassTop) {
+            *r = 0.4f; *g = 0.4f; *b = 0.4f;     // Charcoal gray
+        } else if (y < forestTop) {
+            *r = 0.6f; *g = 0.1f; *b = 0.05f;    // Molten red
+        } else if (y < rockTop) {
+            *r = 0.3f; *g = 0.05f; *b = 0.05f;   // Lava rock
+        } else {
+            *r = 0.1f; *g = 0.05f; *b = 0.05f;   // Scorched black
         }
         break;
+
     case ISLAND_ARCTIC:
-        if (y < bottomColorTop) {
-            *r = 0.8f; *g = 0.9f; *b = 1.0f;  // Light blue
-        }
-        else if (y < middleColorTop) {
-            *r = 0.7f; *g = 0.8f; *b = 0.9f;  // Blue-gray
-        }
-        else {
-            *r = 0.6f; *g = 0.6f; *b = 1.0f;  // Dark gray
+        if (y < sandTop) {
+            *r = 0.85f; *g = 0.92f; *b = 1.0f;   // Icy blue
+        } else if (y < grassTop) {
+            *r = 0.75f; *g = 0.85f; *b = 0.95f;  // Snowy sky
+        } else if (y < forestTop) {
+            *r = 0.65f; *g = 0.75f; *b = 0.9f;   // Frosty blue-gray
+        } else if (y < rockTop) {
+            *r = 0.5f; *g = 0.6f; *b = 0.75f;    // Ice rock
+        } else {
+            *r = 0.4f; *g = 0.4f; *b = 0.6f;     // Arctic stone
         }
         break;
     }
 }
+
 
 
 void initIsland(Island* island, float baseRadius) {
@@ -378,72 +390,6 @@ static Vec3 closestPointOnTriangle(Vec3 p, Triangle tri) {
     return result;
 }
 
-/**
- * Checks if a sphere at `position` with radius `radius` collides with the island mesh.
- * Uses the island's KD-tree to query nearby triangles for collision detection.
- * 
- * @param island Pointer to the Island struct containing geometry and KD-tree.
- * @param position Center position of the sphere to test collision.
- * @param radius Radius of the sphere.
- * @return true if collision occurs, false otherwise.
- */
-bool checkIslandCollision(Island* island, Vec3 position, float radius) {
-    // If KD-tree is not built yet, can't check collisions
-    if (!island->kdTree) return false;
-
-    // Preallocate array to store nearby triangles
-    int triTotal = 32;  // Adjust this size depending on your expected density
-    Triangle nearbyTris[triTotal];
-    int triCount = 0;
-
-    // Smaller objects break the math, so pretend the objects have radius = 1
-    float workingRadius = 1.0f;
-
-    // Collision search radius is doubled here to ensure some margin
-    float collisionRadius = workingRadius * 2.0f;
-
-    // Callback function to collect triangles found in KD-tree query
-    void collectCallback(const Triangle* tri) {
-        if (triCount < triTotal) {
-            nearbyTris[triCount++] = *tri;
-        }
-    }
-
-    // Query KD-tree for all triangles within collisionRadius of position
-    kd_query_nearest(island->kdTree, position, collisionRadius, collectCallback);
-
-    // For each nearby triangle, test actual collision against the sphere
-    for (int i = 0; i < triCount; i++) {
-        Triangle tri = nearbyTris[i];
-
-        // Find closest point on triangle to sphere center
-        Vec3 closest = closestPointOnTriangle(position, tri);
-
-        // Compute squared distance between sphere center and closest point
-        float dx = position.x - closest.x;
-        float dy = position.y - closest.y;
-        float dz = position.z - closest.z;
-        float distSq = dx * dx + dy * dy + dz * dz;
-
-        // If the distance is less than or equal to radius, collision occurs
-        // See if in the actual radius
-        if (radius >= 1) {
-            if (distSq <= radius * radius) {
-                return true;
-            }
-        }
-        else {
-            if (distSq <= radius) {
-                return true;
-            }
-        }
-        
-    }
-
-    // No collision found
-    return false;
-}
-
 // Helper: normalize a vector
 static Vec3 normalize(Vec3 v) {
     float len = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
@@ -525,10 +471,14 @@ bool cameraCoveredCheck(Vec3 cameraPos, Vec3 playerPos, Island* island) {
 
     ray_context = &context;
 
-    // Use a query radius slightly larger than the ray width
-    float queryRadius = 1.0f;
+    Vec3 middleCameraPlayer = {
+        ((playerPos.x + cameraPos.x) / 2),
+        ((playerPos.y + cameraPos.y) / 2),
+        ((playerPos.z + cameraPos.z) / 2)
+    };
 
-    kd_query_nearest(island->kdTree, cameraPos, distance, ray_query_callback);
+    // Search the 3 closest triangles instead of radius-based search
+    kd_query_nearest(island->kdTree, middleCameraPlayer, 10, ray_query_callback);
 
     ray_context = NULL;
 
@@ -536,121 +486,96 @@ bool cameraCoveredCheck(Vec3 cameraPos, Vec3 playerPos, Island* island) {
 }
 
 
-/*
+// debug draw triangle colliding with
+void drawCollidingTriangle(const Triangle* tri) {
+    if (!tri) return;
 
-Draw red what the player is colliding with and make it 
-closer to player so it isn't inside the island/whatever
-red = no collision, green means collision
-*/
-// Helper function: Clamp a value between 0 and 1
-static float clamp01(float x) {
-    return (x < 0) ? 0 : (x > 1) ? 1 : x;
+    float change = 0.05f;
+
+    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 3);
+
+    GX_Position3f32(tri->v1.x, tri->v1.y + change, tri->v1.z);
+    GX_Color3f32(1.0f, 0.0f, 0.0f);  // Red
+
+    GX_Position3f32(tri->v2.x, tri->v2.y + change, tri->v2.z);
+    GX_Color3f32(0.0f, 1.0f, 0.0f);  // Green
+
+    GX_Position3f32(tri->v3.x, tri->v3.y + change, tri->v3.z);
+    GX_Color3f32(0.0f, 0.0f, 1.0f);  // Blue
+
+    GX_End();
 }
 
-void drawNearestTriangleToPlayer(Island* island, Vec3 playerPos, float playerRadius) {
-    if (!island || !island->kdTree) return;
+// Ground/wall collision
+// Checks if a sphere at `position` with `radius` intersects the terrain of the island
+bool checkIslandCollision(Island* island, Vec3 position, float radius) {
+    if (!island || !island->kdTree) return false;
 
-    Triangle nearestTri;
-    bool found = false;
-    float nearestDistSq = FLT_MAX;
+    typedef struct {
+        Vec3 center;
+        float radius;
+        bool collided;
+    } CollisionContext;
 
-    void findNearestCallback(const Triangle * tri) {
-        // Compute full 3D center of triangle
-        Vec3 center = {
-            (tri->v1.x + tri->v2.x + tri->v3.x) / 3.0f,
-            (tri->v1.y + tri->v2.y + tri->v3.y) / 3.0f,
-            (tri->v1.z + tri->v2.z + tri->v3.z) / 3.0f
-        };
+    CollisionContext context = {
+        .center = position,
+        .radius = radius,
+        .collided = false
+    };
 
-        float dx = playerPos.x - center.x;
-        float dy = playerPos.y - center.y;
-        float dz = playerPos.z - center.z;
-        float distSq = dx * dx + dy * dy + dz * dz;
-
-        if (distSq < nearestDistSq) {
-            nearestDistSq = distSq;
-            nearestTri = *tri;
-            found = true;
+    void collisionCallback(const Triangle * tri) {
+        Vec3 closest = closestPointOnTriangle(context.center, *tri);
+        Vec3 diff = subtract(context.center, closest);
+        float distSq = dot(diff, diff);
+        if (distSq <= context.radius / 2) {
+            drawCollidingTriangle(tri);
+            context.collided = true;
         }
     }
 
-    kd_query_nearest(island->kdTree, playerPos, playerRadius * 3.0f, findNearestCallback);
-    if (!found) return;
+    // Query the 3 closest triangles regardless of actual range
+    kd_query_nearest(island->kdTree, position, 10, collisionCallback);
 
-    // Compute closest point on nearest triangle to player
-    Vec3 closestPoint = closestPointOnTriangle(playerPos, nearestTri);
-
-    // Compute triangle normal
-    Vec3 u = {
-        nearestTri.v2.x - nearestTri.v1.x,
-        nearestTri.v2.y - nearestTri.v1.y,
-        nearestTri.v2.z - nearestTri.v1.z
-    };
-    Vec3 v = {
-        nearestTri.v3.x - nearestTri.v1.x,
-        nearestTri.v3.y - nearestTri.v1.y,
-        nearestTri.v3.z - nearestTri.v1.z
-    };
-    Vec3 normal = {
-        u.y * v.z - u.z * v.y,
-        u.z * v.x - u.x * v.z,
-        u.x * v.y - u.y * v.x
-    };
-    float length = sqrtf(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
-    if (length > 0.0f) {
-        normal.x /= length;
-        normal.y /= length;
-        normal.z /= length;
-    }
-    else {
-        normal = (Vec3){ 0,1,0 }; // fallback normal
-    }
-
-    // Offset cube slightly above the triangle surface (along normal)
-    float offsetDist = 0.1f;
-    Vec3 cubeCenter = {
-        closestPoint.x + normal.x * offsetDist,
-        closestPoint.y + normal.y * offsetDist,
-        closestPoint.z + normal.z * offsetDist
-    };
-
-    // Color based on actual collision
-    bool collision = checkIslandCollision(island, playerPos, playerRadius);
-    float r = collision ? 0.0f : 1.0f;
-    float g = collision ? 1.0f : 0.0f;
-    float b = 0.0f;
-
-    // Draw small cube at cubeCenter
-    float halfSize = 0.1f;
-
-    static const int faceIndices[6][4] = {
-        {0, 1, 2, 3}, // front
-        {4, 5, 6, 7}, // back
-        {0, 1, 5, 4}, // bottom
-        {2, 3, 7, 6}, // top
-        {1, 2, 6, 5}, // right
-        {0, 3, 7, 4}  // left
-    };
-
-    static const Vec3 offsets[8] = {
-        {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
-        {-1, -1, 1},  {1, -1, 1},  {1, 1, 1},  {-1, 1, 1}
-    };
-
-    for (int i = 0; i < 6; i++) {
-        GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
-        for (int j = 0; j < 4; ++j) {
-            Vec3 o = offsets[faceIndices[i][j]];
-            GX_Position3f32(
-                cubeCenter.x + o.x * halfSize,
-                cubeCenter.y + o.y * halfSize,
-                cubeCenter.z + o.z * halfSize
-            );
-            GX_Color3f32(r, g, b);
-        }
-        GX_End();
-    }
+    return context.collided;
 }
+
+// Absolutly broken I am very mad, ai sucks at coding, never again
+float getIslandTriangleHeight(Island* island, Vec3 position, float radius) {
+    if (!island || !island->kdTree) return false;
+
+    typedef struct {
+        Vec3 center;
+        float radius;
+        float height;
+    } CollisionContext;
+
+    CollisionContext context = {
+        .center = position,
+        .radius = radius,
+        .height = position.y
+    };
+
+    void collisionCallback(const Triangle * tri) {
+        Vec3 closest = closestPointOnTriangle(context.center, *tri);
+        Vec3 diff = subtract(context.center, closest);
+        float distSq = dot(diff, diff);
+        if (distSq <= context.radius / 2) {
+            drawCollidingTriangle(tri);
+            context.height = tri->v2.y;
+        }
+    }
+
+    // Query the 3 closest triangles regardless of actual range
+    kd_query_nearest(island->kdTree, position, 1, collisionCallback);
+
+    return context.height;
+}
+
+
+
+
+
+
 
 
 

@@ -28,8 +28,8 @@ typedef struct {
 void initIsland(Island* island, float baseRadius);
 void drawIsland(Island* island);
 bool checkIslandCollision(Island* island, Vec3 position, float radius);
+float getIslandTriangleHeight(Island* island, Vec3 position, float radius);
 void freeIslandResources(Island* island);
-void drawNearestTriangleToPlayer(Island* island, Vec3 playerPos, float playerRadius);
 bool cameraCoveredCheck(Vec3 cameraPos, Vec3 playerPos, Island* island);
 
 #endif

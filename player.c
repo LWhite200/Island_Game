@@ -9,10 +9,11 @@ void initPlayer(Player* player) {
     player->position.y = 0.0f;
     player->position.z = 0.0f;
     player->yaw = 0.0f;
-    player->speed = 0.075f;
-    player->radius = 0.2f;
+    player->speed = 0.2f;
+    player->yVelocity = 0.0f;
+    player->radius = 0.3f;
     player->gravity = 0.15;
-    player->upPush = 0.0075; // when they are in the ground, push up until slightly not
+    player->upPush = 0.075; // when they are in the ground, push up until slightly not
 }
 
 // Update player position based on input (same as boat for now)
@@ -30,21 +31,6 @@ void updatePlayer(Player* player, bool upp, bool down, bool left, bool right, fl
         player->position.y,
         player->position.z + cosf(player->yaw) * player->speed
     };
-
-    // Collision checks
-    bool frontBlocked = checkAllIslandsCollision(islandManager, forwardPos, player->radius);
-    bool currentlyBlocked = checkAllIslandsCollision(islandManager, curPos, player->radius);
-    // bool behindBlocked = checkAllIslandsCollision(islandManager, backwardPos, player->radius);
-
-    
-
-    // Draw closest area where player could collide with
-    if (frontBlocked && !currentlyBlocked) {
-        drawIslandHitArea(islandManager, forwardPos, player->radius);
-    }
-    else {
-        drawIslandHitArea(islandManager, curPos, player->radius);
-    }
 
     // Movement
     if (down) {
@@ -66,26 +52,44 @@ void updatePlayer(Player* player, bool upp, bool down, bool left, bool right, fl
         player->yaw += 0.05f;
     }
 
-    Vec3 belowPos = {
-        player->position.x - sinf(player->yaw) * player->speed,
-        player->position.y - player->gravity,
-        player->position.z + cosf(player->yaw) * player->speed
+    // -----------------------------------------
+
+    // Apply gravity
+    player->yVelocity -= player->gravity;
+
+    // Predict next Y position
+    float nextY = player->position.y + player->yVelocity;
+
+    // Check collision at predicted position
+    Vec3 bottomPos = {
+        player->position.x,
+        nextY,
+        player->position.z
     };
 
-    bool belowBlocked = checkAllIslandsCollision(islandManager, belowPos, player->radius);
+    bool onGround = checkAllIslandsCollision(islandManager, bottomPos, player->radius);
 
-    if (!belowBlocked) {
-        player->position.y -= player->gravity;
-        if (player->position.y <= -2.0) {
-            player->position.y = -2.0;
+    if (onGround) {
+        // Reset velocity when grounded
+        player->yVelocity = 0;
+
+        // Softly push up until no longer colliding (single increment, not while-loop)
+        bottomPos.y = player->position.y;
+        while (checkAllIslandsCollision(islandManager, bottomPos, player->radius) && bottomPos.y < player->position.y + 0.2f) {
+            bottomPos.y += player->upPush;
         }
+        player->position.y = bottomPos.y;
     }
     else {
-        while (checkAllIslandsCollision(islandManager, belowPos, player->radius)) {
-            belowPos.y += player->upPush;
+        player->position.y = nextY;
+
+        // Optional clamp for falling limit
+        if (player->position.y <= BASE_Y) {
+            player->position.y = BASE_Y;
+            player->yVelocity = 0;
         }
-        player->position.y = belowPos.y;
     }
+
 
     // Show indicator if near island
     if (player->position.y <= boatChangeY) {
@@ -118,6 +122,56 @@ static int sideFaces[4][3] = {
     {0, 3, 4},  // Back
     {0, 4, 1}   // Left
 };
+
+
+void drawRadiusSphere(float radius, float cx, float cy, float cz) {
+    const int latSteps = 10;
+    const int lonSteps = 10;
+
+    float latStep = M_PI / latSteps;
+    float lonStep = 2 * M_PI / lonSteps;
+
+    // Horizontal circles (latitude)
+    for (int i = 1; i < latSteps; i++) {
+        float lat = -M_PI_2 + i * latStep;
+        float y = sinf(lat);
+        float r = cosf(lat);
+
+        GX_Begin(GX_LINESTRIP, GX_VTXFMT0, lonSteps + 1);
+        for (int j = 0; j <= lonSteps; j++) {
+            float lon = j * lonStep;
+            float x = cosf(lon) * r;
+            float z = sinf(lon) * r;
+
+            GX_Position3f32(cx + radius * x, cy + radius * y, cz + radius * z);
+            GX_Color3f32(1.0f, 0.0f, 0.0f);  // Red
+        }
+        GX_End();
+    }
+
+    // Vertical circles (longitude)
+    for (int j = 0; j < lonSteps; j++) {
+        float lon = j * lonStep;
+
+        GX_Begin(GX_LINESTRIP, GX_VTXFMT0, latSteps + 1);
+        for (int i = 0; i <= latSteps; i++) {
+            float lat = -M_PI_2 + i * latStep;
+            float y = sinf(lat);
+            float r = cosf(lat);
+            float x = cosf(lon) * r;
+            float z = sinf(lon) * r;
+
+            GX_Position3f32(cx + radius * x, cy + radius * y, cz + radius * z);
+            GX_Color3f32(1.0f, 0.0f, 0.0f);  // Red
+        }
+        GX_End();
+    }
+}
+
+
+
+
+
 
 void drawPlayer(float x, float y, float z, float yaw) {
     float rotated[5][3];
@@ -156,4 +210,6 @@ void drawPlayer(float x, float y, float z, float yaw) {
         }
     }
     GX_End();
+
+    drawRadiusSphere(0.3, x, y, z);
 }

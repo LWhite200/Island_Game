@@ -9,6 +9,7 @@ typedef struct {
     guVector position;
     float yaw;
     float speed;
+    float yVelocity;
     float radius;
     float gravity;
     float upPush;
