@@ -38,6 +38,11 @@ bool playerIsGrounded(const Player* player) {
     return player->yVelocity == 0.0f;
 }
 
+static bool checkWorldBoundary(Vec3 pos, float radius) {
+    return (pos.x < -WORLD_RADIUS + radius || pos.x > WORLD_RADIUS - radius ||
+            pos.z < -WORLD_RADIUS + radius || pos.z > WORLD_RADIUS - radius);
+}
+
 // ============================================================
 // Per-frame update
 // ============================================================
@@ -51,16 +56,27 @@ void updatePlayer(Player* player,
     if (left)  player->yaw -= 0.05f;
     if (right) player->yaw += 0.05f;
 
-    // ---- Horizontal movement ----
-    // Movement direction is in camera-adjusted world space
+    // ---- Horizontal movement setup ----
     float moveYaw = player->yaw + g_cameraYawOffset;
-    if (upp) {
-        player->position.x -= sinf(moveYaw) * player->speed;
-        player->position.z += cosf(moveYaw) * player->speed;
+    float moveX = sinf(moveYaw) * player->speed;
+    float moveZ = cosf(moveYaw) * player->speed;
+
+    // --- Build candidate positions for collision ---
+    Vec3 fwdPos = { player->position.x - moveX, player->position.y, player->position.z + moveZ };
+    Vec3 bwdPos = { player->position.x + moveX, player->position.y, player->position.z - moveZ };
+
+    // Check world boundaries using the candidate positions
+    bool frontBlocked  = checkWorldBoundary(fwdPos, player->radius);
+    bool behindBlocked = checkWorldBoundary(bwdPos, player->radius);
+
+    // ---- Horizontal movement execution ----
+    if (upp && !frontBlocked) {
+        player->position.x -= moveX;
+        player->position.z += moveZ;
     }
-    if (down) {
-        player->position.x += sinf(moveYaw) * player->speed;
-        player->position.z -= cosf(moveYaw) * player->speed;
+    if (down && !behindBlocked) {
+        player->position.x += moveX;
+        player->position.z -= moveZ;
     }
 
     // ---- Vertical physics ----

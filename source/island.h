@@ -35,9 +35,6 @@ typedef struct IslandManager {
     Island islands[MAX_ISLANDS];
     int    count;
 
-    OceanObstacle obstacles[MAX_OBSTACLES];
-    int           obstacleCount;
-
     // World-streaming bookkeeping
     Vec3 lastStreamPos;   // Player/boat position at the last streaming event
     bool streamingInit;   // Becomes true after the first regenerateIslands()
@@ -52,21 +49,12 @@ void freeAllIslands    (IslandManager* manager); // Just resets counts to 0 --
 
 Island* createIsland (IslandManager* manager, float x, float z);
 
-// ---- World streaming ----
-// Call once per frame with the current player/boat position. Spawns new
-// islands ahead of travel and evicts ones left far behind.
-void updateWorldStreaming (IslandManager* manager, Vec3 playerPos);
-
-// ---- Obstacles ----
-void generateObstacles (IslandManager* manager);
 
 // ---- Rendering ----
 void drawAllIslands   (IslandManager* manager);
-void drawAllObstacles (IslandManager* manager, float time);
 void drawIndicator    (Vec3 position); // Small floating triangle: "you can board/land here"
 
 // ---- Collision / height queries (checked against ALL islands) ----
 bool  checkAllIslandsCollision (IslandManager* manager, Vec3 position, float radius);
-bool  checkObstacleCollision   (IslandManager* manager, Vec3 position, float radius);
 float islandGroundHeight       (IslandManager* manager, Vec3 position, float radius);
 bool  checkCameraPlayerCovered (Vec3 cameraPos, Vec3 playerPos, IslandManager* manager);

@@ -34,11 +34,9 @@ static float rndFloat(float min, float max) {
 
 void initIslandManager(IslandManager* manager) {
     manager->count         = 0;
-    manager->obstacleCount = 0;
     manager->streamingInit = false;
     manager->lastStreamPos = (Vec3){0,0,0};
     memset(manager->islands,   0, sizeof(manager->islands));
-    memset(manager->obstacles, 0, sizeof(manager->obstacles));
     srand((unsigned int)time(NULL));
 }
 
@@ -51,15 +49,6 @@ Island* createIsland(IslandManager* manager, float x, float z) {
     isle->heightScale = rndFloat(ISLAND_MIN_HEIGHT_SCALE, ISLAND_MAX_HEIGHT_SCALE);
     isle->colorStyle  = rand() % NUM_ISLAND_STYLES;
     return isle;
-}
-
-// Removes island at `slot`, shifting the rest down to keep the array packed.
-// No free() needed anywhere -- islands are plain values, not heap objects.
-static void evictIsland(IslandManager* manager, int slot) {
-    if (slot < 0 || slot >= manager->count) return;
-    for (int i = slot; i < manager->count - 1; i++)
-        manager->islands[i] = manager->islands[i + 1];
-    manager->count--;
 }
 
 void freeAllIslands(IslandManager* manager) {
@@ -94,179 +83,6 @@ void regenerateIslands(IslandManager* manager) {
 
     manager->lastStreamPos = (Vec3){0,0,0};
     manager->streamingInit = true;
-    generateObstacles(manager);
-}
-
-// ============================================================
-// SECTION: world streaming
-// ============================================================
-// When the player moves WORLD_STREAM_DISTANCE units from the last stream
-// position: evict islands beyond WORLD_CULL_DISTANCE, then spawn a fresh
-// ring of islands ahead in the direction of travel.
-
-void updateWorldStreaming(IslandManager* manager, Vec3 playerPos) {
-    if (!manager->streamingInit) return;
-
-    Vec3  lp    = manager->lastStreamPos;
-    float dx    = playerPos.x - lp.x;
-    float dz    = playerPos.z - lp.z;
-    float moved = sqrtf(dx*dx + dz*dz);
-
-    if (moved < WORLD_STREAM_DISTANCE) return;
-
-    // ---- Cull distant islands ----
-    for (int i = manager->count - 1; i >= 0; i--) {
-        float ix = manager->islands[i].center.x - playerPos.x;
-        float iz = manager->islands[i].center.z - playerPos.z;
-        if (ix*ix + iz*iz > WORLD_CULL_DISTANCE * WORLD_CULL_DISTANCE)
-            evictIsland(manager, i);
-    }
-
-    // ---- Spawn new islands ahead ----
-    float travelAngle = atan2f(dx, dz);
-    int   spawned     = 0;
-    int   attempts    = 0;
-
-    while (spawned < numIslands && attempts < 200 && manager->count < MAX_ISLANDS - 1) {
-        attempts++;
-        float scatter = travelAngle + rndFloat(-M_PI / 3.0f, M_PI / 3.0f);
-        float dist    = rndFloat(40.0f, 70.0f);
-        float nx      = playerPos.x + sinf(scatter) * dist;
-        float nz      = playerPos.z + cosf(scatter) * dist;
-
-        bool ok = true;
-        for (int j = 0; j < manager->count; j++) {
-            float sdx = nx - manager->islands[j].center.x;
-            float sdz = nz - manager->islands[j].center.z;
-            if (sdx*sdx + sdz*sdz < ISLAND_MIN_SEPARATION * ISLAND_MIN_SEPARATION) {
-                ok = false; break;
-            }
-        }
-
-        if (ok) {
-            Island* isle = createIsland(manager, nx, nz);
-            if (isle) {
-                spawned++;
-                // Scatter a few obstacles near the new island
-                int numNew = rand() % 4;
-                for (int k = 0; k < numNew && manager->obstacleCount < MAX_OBSTACLES; k++) {
-                    float angle = rndFloat(0, 2.0f * M_PI);
-                    float odist = rndFloat(isle->radius + 2.0f, isle->radius + 10.0f);
-                    OceanObstacle* ob = &manager->obstacles[manager->obstacleCount++];
-                    ob->position = (Vec3){ nx + cosf(angle)*odist, 0, nz + sinf(angle)*odist };
-                    ob->radius   = rndFloat(0.5f, OBSTACLE_RADIUS * 1.5f);
-                    ob->height   = rndFloat(0.3f, 1.8f);
-                }
-            }
-        }
-    }
-
-    // Cull obstacles that are now too far
-    int newObCount = 0;
-    for (int i = 0; i < manager->obstacleCount; i++) {
-        float odx = manager->obstacles[i].position.x - playerPos.x;
-        float odz = manager->obstacles[i].position.z - playerPos.z;
-        if (odx*odx + odz*odz <= WORLD_CULL_DISTANCE * WORLD_CULL_DISTANCE) {
-            if (newObCount != i)
-                manager->obstacles[newObCount] = manager->obstacles[i];
-            newObCount++;
-        }
-    }
-    manager->obstacleCount = newObCount;
-
-    manager->lastStreamPos = playerPos;
-}
-
-// ============================================================
-// SECTION: ocean obstacles
-// ============================================================
-
-void generateObstacles(IslandManager* manager) {
-    manager->obstacleCount = 0;
-
-    // Cluster rocks around each island shoreline
-    for (int i = 0; i < manager->count && manager->obstacleCount < MAX_OBSTACLES - 4; i++) {
-        Island* isle = &manager->islands[i];
-
-        int clusterSize = rand() % 5 + 2;
-        for (int j = 0; j < clusterSize && manager->obstacleCount < MAX_OBSTACLES; j++) {
-            float angle = rndFloat(0, 2.0f * M_PI);
-            float dist  = rndFloat(isle->radius + 1.5f, isle->radius + 8.0f);
-
-            OceanObstacle* ob = &manager->obstacles[manager->obstacleCount++];
-            ob->position = (Vec3){
-                isle->center.x + cosf(angle) * dist,
-                0.0f,
-                isle->center.z + sinf(angle) * dist
-            };
-            ob->radius = rndFloat(0.4f, OBSTACLE_RADIUS * 1.5f);
-            ob->height = rndFloat(0.2f, 2.0f);
-        }
-    }
-
-    // Extra scattered rocks in the open ocean
-    while (manager->obstacleCount < MAX_OBSTACLES) {
-        OceanObstacle* ob = &manager->obstacles[manager->obstacleCount++];
-        float angle = rndFloat(0, 2.0f * M_PI);
-        float dist  = rndFloat(5.0f, 50.0f);
-        ob->position = (Vec3){ cosf(angle) * dist, 0.0f, sinf(angle) * dist };
-        ob->radius   = rndFloat(0.3f, OBSTACLE_RADIUS);
-        ob->height   = rndFloat(0.15f, 0.9f);
-    }
-}
-
-// Draw one rock pillar -- a tapered hexagonal column
-static void drawObstacle(const OceanObstacle* ob, float time) {
-    float waveY = sinf((ob->position.x + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE
-                + cosf((ob->position.z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
-
-    float x     = ob->position.x;
-    float z     = ob->position.z;
-    float baseY = ISLAND_BASE_Y; // Base sits underwater so it always looks like it emerges from the sea
-    float topY  = waveY + ob->height;
-    float br    = ob->radius;
-    float tr    = br * 0.35f;   // Tapered top
-
-    const int SIDES = 6;
-
-    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, SIDES * 6);
-    for (int i = 0; i < SIDES; i++) {
-        float a0 = (float)i       / SIDES * 2.0f * M_PI;
-        float a1 = (float)(i + 1) / SIDES * 2.0f * M_PI;
-
-        float bx0 = x + cosf(a0)*br, bz0 = z + sinf(a0)*br;
-        float bx1 = x + cosf(a1)*br, bz1 = z + sinf(a1)*br;
-        float tx0 = x + cosf(a0)*tr, tz0 = z + sinf(a0)*tr;
-        float tx1 = x + cosf(a1)*tr, tz1 = z + sinf(a1)*tr;
-
-        float shade = 0.32f + 0.07f * i;
-        float cr = shade * 0.88f, cg = shade, cb = shade * 0.82f;
-
-        GX_Position3f32(bx0, baseY, bz0); GX_Color3f32(cr,       cg,       cb);
-        GX_Position3f32(bx1, baseY, bz1); GX_Color3f32(cr,       cg,       cb);
-        GX_Position3f32(tx0, topY,  tz0); GX_Color3f32(cr*1.25f, cg*1.25f, cb*1.25f);
-
-        GX_Position3f32(bx1, baseY, bz1); GX_Color3f32(cr,       cg,       cb);
-        GX_Position3f32(tx1, topY,  tz1); GX_Color3f32(cr*1.25f, cg*1.25f, cb*1.25f);
-        GX_Position3f32(tx0, topY,  tz0); GX_Color3f32(cr*1.25f, cg*1.25f, cb*1.25f);
-    }
-    GX_End();
-
-    // Top cap (fan from centre)
-    GX_Begin(GX_TRIANGLES, GX_VTXFMT0, SIDES * 3);
-    for (int i = 0; i < SIDES; i++) {
-        float a0 = (float)i       / SIDES * 2.0f * M_PI;
-        float a1 = (float)(i + 1) / SIDES * 2.0f * M_PI;
-        GX_Position3f32(x,              topY, z             ); GX_Color3f32(0.55f, 0.60f, 0.52f);
-        GX_Position3f32(x+cosf(a0)*tr, topY, z+sinf(a0)*tr); GX_Color3f32(0.48f, 0.53f, 0.46f);
-        GX_Position3f32(x+cosf(a1)*tr, topY, z+sinf(a1)*tr); GX_Color3f32(0.48f, 0.53f, 0.46f);
-    }
-    GX_End();
-}
-
-void drawAllObstacles(IslandManager* manager, float time) {
-    for (int i = 0; i < manager->obstacleCount; i++)
-        drawObstacle(&manager->obstacles[i], time);
 }
 
 // ============================================================
@@ -376,17 +192,6 @@ bool checkAllIslandsCollision(IslandManager* manager, Vec3 position, float radiu
     for (int i = 0; i < manager->count; i++)
         if (checkIslandCollision(&manager->islands[i], position, radius))
             return true;
-    return false;
-}
-
-bool checkObstacleCollision(IslandManager* manager, Vec3 position, float radius) {
-    for (int i = 0; i < manager->obstacleCount; i++) {
-        OceanObstacle* ob = &manager->obstacles[i];
-        float dx = position.x - ob->position.x;
-        float dz = position.z - ob->position.z;
-        float touchDist = ob->radius + radius;
-        if (dx*dx + dz*dz < touchDist * touchDist) return true;
-    }
     return false;
 }
 

@@ -16,6 +16,9 @@
 // World / wave constants
 // ============================================================
 
+// The Radius of the world, 80 by default for 160x160 patch
+#define WORLD_RADIUS 80.0f
+
 #define WAVE_FREQUENCY  0.5f   // Spatial frequency of the ocean wave (radians / world-unit)
 #define WAVE_AMPLITUDE  0.15f  // Peak height of waves in world-units
 #define WAVE_SPEED      0.03f  // How fast the wave phase advances each frame
@@ -38,13 +41,13 @@
 // Island generation tuning
 // ============================================================
 
-#define MAX_ISLANDS         32    // Max islands alive at once
-#define numIslands           6    // Islands to seed at the start / around the player
+#define MAX_ISLANDS         16    // Max islands alive at once
+#define numIslands          16    // Islands to seed at the start / around the player
 
 // A hemisphere's height above its base is always equal to its radius,
 // so radius alone controls both how wide AND how tall an island is.
-#define ISLAND_MIN_RADIUS   10.0f
-#define ISLAND_MAX_RADIUS   22.0f
+#define ISLAND_MIN_RADIUS   5.0f
+#define ISLAND_MAX_RADIUS   40.0f
 
 // New tuning constant: Scales the height relative to the radius.
 // 1.0f = standard hemisphere (height equals radius), 
@@ -72,12 +75,7 @@
 // so two islands never overlap).
 #define ISLAND_MIN_SEPARATION   55.0f
 
-// ============================================================
-// Ocean obstacles (plain rock pillars scattered in the sea)
-// ============================================================
 
-#define MAX_OBSTACLES   24
-#define OBSTACLE_RADIUS  0.8f
 
 // ============================================================
 // Player movement constants
@@ -100,16 +98,6 @@ typedef enum {
     ISLAND_VOLCANO  = 1,
     ISLAND_ARCTIC   = 2,
 } IslandColorStyle;
-
-// ============================================================
-// Ocean obstacle -- a static rock pillar in the sea
-// ============================================================
-
-typedef struct {
-    Vec3  position;
-    float radius;
-    float height;       // How tall the pillar protrudes above water
-} OceanObstacle;
 
 // ============================================================
 // Simple inline math helpers (shared everywhere)

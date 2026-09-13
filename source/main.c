@@ -28,6 +28,7 @@
 #include "boat.h"
 #include "player.h"
 #include "camera.h"
+#include "boundary.h"
 
 #define GP_FIFO_SIZE (256 * 1024)
 
@@ -120,11 +121,10 @@ int main(void) {
         if (jump && playerIsGrounded(&player))
             player.yVelocity = JUMP_FORCE;
 
-        // ---- World streaming: keep generating islands as we explore ----
+        // ---- figure out current player location ----
         Vec3 trackPos = isPlayerActive
             ? (Vec3){ player.position.x, player.position.y, player.position.z }
             : (Vec3){ boat.position.x,   boat.position.y,   boat.position.z   };
-        updateWorldStreaming(&world, trackPos);
 
         // ---- Update the active entity ----
         if (isPlayerActive)
@@ -136,8 +136,6 @@ int main(void) {
 
         // ---- Advance wave time (and wrap so it never grows unbounded) ----
         time += WAVE_SPEED;
-        const float WRAP_LEN = 5.0f * (2.0f * M_PI / WAVE_FREQUENCY);
-        if (time >= WRAP_LEN) time -= WRAP_LEN;
 
         // ============================================================
         // Rendering
@@ -148,7 +146,7 @@ int main(void) {
 
         drawWater(time, trackPos.x, trackPos.z);
         drawAllIslands(&world);
-        drawAllObstacles(&world, time);
+        drawWorldBoundary();
 
         if (isPlayerActive)
             drawPlayer(player.position.x, player.position.y, player.position.z, player.yaw);

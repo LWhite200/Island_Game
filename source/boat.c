@@ -2,8 +2,8 @@
 // Player-controlled boat.
 //
 // The boat's Y is computed from the wave formula every frame so it visually
-// bobs on the water surface. Horizontal movement is blocked by island terrain
-// AND by ocean obstacles (rocks/reefs).
+// bobs on the water surface. Horizontal movement is blocked by island terrain,
+// ocean obstacles, and the world boundaries ($\pm$WORLD_RADIUS).
 
 #include <gccore.h>
 #include <math.h>
@@ -30,6 +30,12 @@ static float waveHeightAt(float x, float z, float time) {
          + cosf((z + time) * WAVE_FREQUENCY) * WAVE_AMPLITUDE;
 }
 
+// Checks if a given position exceeds the world radius bounds considering the boat's radius.
+static bool checkWorldBoundary(Vec3 pos, float radius) {
+    return (pos.x < -WORLD_RADIUS + radius || pos.x > WORLD_RADIUS - radius ||
+            pos.z < -WORLD_RADIUS + radius || pos.z > WORLD_RADIUS - radius);
+}
+
 void updateBoat(Boat* boat,
                 bool upp, bool down, bool left, bool right,
                 float time, IslandManager* islandManager)
@@ -54,15 +60,12 @@ void updateBoat(Boat* boat,
         boat->position.z - cosf(boat->yaw) * boat->speed
     };
 
-    // Check both island terrain and ocean obstacles
-    bool frontBlocked = checkAllIslandsCollision(islandManager, fwdPos, boat->radius)
-                     || checkObstacleCollision(islandManager, fwdPos, boat->radius);
-    bool behindBlocked= checkAllIslandsCollision(islandManager, bwdPos, boat->radius)
-                     || checkObstacleCollision(islandManager, bwdPos, boat->radius);
-    bool curBlocked   = checkAllIslandsCollision(islandManager, curPos, boat->radius)
-                     || checkObstacleCollision(islandManager, curPos, boat->radius);
+    // Check island terrain, ocean obstacles, AND world boundaries
+    bool frontBlocked  = checkAllIslandsCollision(islandManager, fwdPos, boat->radius) || checkWorldBoundary(fwdPos, boat->radius);
+    bool behindBlocked = checkAllIslandsCollision(islandManager, bwdPos, boat->radius) || checkWorldBoundary(bwdPos, boat->radius);
+    bool curBlocked    = checkAllIslandsCollision(islandManager, curPos, boat->radius) || checkWorldBoundary(curPos, boat->radius);
 
-    // Show boarding indicator when the boat is touching land
+    // Show collision/boarding indicator when the boat touches land or the world border
     if (frontBlocked || curBlocked || behindBlocked)
         drawIndicator(curPos);
 

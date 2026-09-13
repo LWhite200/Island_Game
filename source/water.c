@@ -13,9 +13,8 @@
 #include "common.h"
 
 // Size of the water grid in world-units per side.
-// At WATER_CELL_SIZE=2 and WATER_GRID_CELLS=80 this covers a 160x160 patch,
+// At WATER_CELL_SIZE=2 and WORLD_RADIUS=80 this covers a 160x160 patch,
 // large enough that the horizon clips it before the edge is visible.
-#define WATER_GRID_CELLS  80    // Number of cells per side
 #define WATER_CELL_SIZE    2.0f // World units per cell edge
 
 void drawWater(float time, float originX, float originZ) {
@@ -25,7 +24,7 @@ void drawWater(float time, float originX, float originZ) {
     float snapX = floorf(originX / WATER_CELL_SIZE) * WATER_CELL_SIZE;
     float snapZ = floorf(originZ / WATER_CELL_SIZE) * WATER_CELL_SIZE;
 
-    int   N    = WATER_GRID_CELLS;
+    int   N    = WORLD_RADIUS;
     float half = (N / 2) * WATER_CELL_SIZE;
 
     // Maximum wave amplitude used for the colour budget
