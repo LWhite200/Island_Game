@@ -29,6 +29,7 @@
 #include "player.h"
 #include "camera.h"
 #include "boundary.h"
+#include "debug.h"
 
 #define GP_FIFO_SIZE (256 * 1024)
 
@@ -49,6 +50,7 @@ int main(void) {
     initBoat(&boat);
     initPlayer(&player);
     initCamera(&camera);
+    initDebugMenu();
 
     bool isPlayerActive = false; // false = sailing the boat, true = on foot
 
@@ -63,6 +65,9 @@ int main(void) {
         PAD_ScanPads();
 
         if (PAD_ButtonsDown(0) & PAD_BUTTON_START) exit(0);
+
+        // Handle Debug menu inputs
+        updateDebugMenu();
 
         // ---- C-stick (camera orbit) ----
         const float CSTICK_DEAD = 8.0f;
@@ -152,6 +157,9 @@ int main(void) {
             drawPlayer(player.position.x, player.position.y, player.position.z, player.yaw);
         else
             drawBoat(boat.position.x, boat.position.y, boat.position.z, boat.yaw);
+
+
+        drawDebugMenu();
 
         end_frame(fb);
         fb ^= 1;

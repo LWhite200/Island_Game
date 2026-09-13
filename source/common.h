@@ -41,19 +41,19 @@
 // Island generation tuning
 // ============================================================
 
-#define MAX_ISLANDS         16    // Max islands alive at once
-#define numIslands          16    // Islands to seed at the start / around the player
+#define MAX_ISLANDS         5    // Max islands alive at once
+#define numIslands          5    // Islands to seed at the start / around the player
 
 // A hemisphere's height above its base is always equal to its radius,
 // so radius alone controls both how wide AND how tall an island is.
 #define ISLAND_MIN_RADIUS   5.0f
-#define ISLAND_MAX_RADIUS   40.0f
+#define ISLAND_MAX_RADIUS   25.0f
 
 // New tuning constant: Scales the height relative to the radius.
 // 1.0f = standard hemisphere (height equals radius), 
 // 0.5f = flattened hills, 2.0f = steep mountains.
-#define ISLAND_MIN_HEIGHT_SCALE  0.3f
-#define ISLAND_MAX_HEIGHT_SCALE  1.0f
+#define ISLAND_MIN_HEIGHT_SCALE  0.25f
+#define ISLAND_MAX_HEIGHT_SCALE  0.75f
 
 #define NUM_ISLAND_STYLES    3    // Number of colour themes (TROPICAL, VOLCANO, ARCTIC)
 
