@@ -14,6 +14,7 @@
 //  A button           - regenerate the world (debug)
 //  B button           - board / disembark the boat
 //  Z / R button       - jump (on foot)
+//  D-pad up           - open the debug menu (see debug.c for its controls)
 //  START              - quit
 
 #include <stdlib.h>
@@ -90,16 +91,49 @@ int main(void) {
         bool btnB = (PAD_ButtonsDown(0) & PAD_BUTTON_B)  != 0;
         bool btnZ = (PAD_ButtonsDown(0) & PAD_TRIGGER_Z) != 0;
         bool btnR = (PAD_ButtonsDown(0) & PAD_TRIGGER_R) != 0;
-        bool jump = (btnZ || btnR) && isPlayerActive;
+
+        bool jump  = btnR && isPlayerActive;
+        bool reset = btnZ;
+
+        // ---- Z: reset player to starting position ----
+        if (reset) {
+            player.position.x = 0.0f;
+            player.position.y = 25.0f;
+            player.position.z = 0.0f;
+
+            player.yaw       = 0.0f;
+            player.yVelocity = 0.0f;
+
+            // Always return to player mode.
+            isPlayerActive = true;
+
+            // Reset the boat as well.
+            initBoat(&boat);
+
+            // Reset camera around the player.
+            initCamera(&camera);
+        }
+
+        // ---- Debug menu open: the pad belongs to the menu, not the game ----
+        // (R is the menu's "x10" button, so without this it would also jump.)
+        if (debugMenuIsOpen()) {
+            cYaw = 0.0f;
+            cPitch = 0.0f;
+            moveFwd = moveBack = moveLeft = moveRight = false;
+            btnA = btnB = jump = false;
+        }
+
+        // ---- Debug menu closed with Y: values were applied, make new islands ----
+        bool applyNow = debugMenuConsumeApply();
 
         // ---- A: regenerate world (debug helper, works in either mode) ----
-        if (btnA) {
+        if (btnA || applyNow) {
             freeAllIslands(&world);
             regenerateIslands(&world);
         }
 
         // ---- B: board / disembark ----
-        /*
+        
         if (btnB) {
             if (!isPlayerActive) {
                 // Disembark: only when the boat is touching land
@@ -122,7 +156,7 @@ int main(void) {
                 }
             }
         }
-        */
+        
 
         
 
@@ -130,21 +164,47 @@ int main(void) {
         if (jump && playerIsGrounded(&player))
             player.yVelocity = JUMP_FORCE;
 
-        // ---- figure out current player location ----
+        // ---- Update the active entity ----
+        bool touchedWater = false;   // on foot: walking into the sea / standing in it
+        bool pushedLand   = false;   // sailing: steering forward into an island
+
+        if (isPlayerActive)
+            touchedWater = updatePlayer(&player, moveFwd, moveBack, moveLeft, moveRight, &world);
+        else
+            pushedLand = updateBoat(&boat, moveFwd, moveBack, moveLeft, moveRight, time, &world);
+
+        // ---- PLAYER_SNAP: switch between player and boat at the shoreline ----
+        if (PLAYER_SNAP) {
+            if (isPlayerActive && touchedWater) {
+                // Player -> boat. Keep travelling the way the player was moving
+                // (player movement is relative to the camera, hence the offset).
+                float heading = player.yaw + g_cameraYawOffset;
+                if (moveBack && !moveFwd) heading += 3.14159265f;   // walked in backwards
+
+                boatLaunch(&boat, player.position.x, player.position.z, heading, &world);
+                isPlayerActive = false;
+                initCamera(&camera);
+            }
+            else if (!isPlayerActive && pushedLand) {
+                // Boat -> player, but only if there is a beach to stand on.
+                if (playerLandAhead(&player, boat.position.x, boat.position.z, boat.yaw, &world))
+                    isPlayerActive = true;
+            }
+        }
+
+        // Recompute the tracked position after PLAYER_SNAP so the camera and
+        // world rendering use the newly active entity immediately.
         Vec3 trackPos = isPlayerActive
             ? (Vec3){ player.position.x, player.position.y, player.position.z }
             : (Vec3){ boat.position.x,   boat.position.y,   boat.position.z   };
-
-        // ---- Update the active entity ----
-        if (isPlayerActive)
-            updatePlayer(&player, moveFwd, moveBack, moveLeft, moveRight, &world);
-        else
-            updateBoat(&boat, moveFwd, moveBack, moveLeft, moveRight, time, &world);
 
         updateCamera(&camera, &boat, &player, isPlayerActive, &world, cYaw, cPitch);
 
         // ---- Advance wave time (and wrap so it never grows unbounded) ----
         time += WAVE_SPEED;
+
+        if (time >= 1000.0f)
+            time -= 1000.0f;
 
         // ============================================================
         // Rendering

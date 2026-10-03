@@ -13,6 +13,9 @@ typedef struct {
 } Boat;
 
 void initBoat   (Boat* boat);
-void updateBoat (Boat* boat, bool upp, bool down, bool left, bool right,
+bool updateBoat (Boat* boat, bool upp, bool down, bool left, bool right,
                  float time, IslandManager* islandManager);
 void drawBoat   (float x, float y, float z, float yaw);
+
+void boatLaunch (Boat* boat, float x, float z, float yaw,
+                 IslandManager* islandManager);

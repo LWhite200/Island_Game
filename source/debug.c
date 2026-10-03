@@ -1,21 +1,42 @@
 //
 // debug.c
 //
-// Minimal Wii GX debug overlay.
+// In-game debug menu for tuning every value in common.h.
 //
-// No GRRLIB.
-// No textures.
-// No TTF.
-// No font libraries.
+// Minimal Wii GX overlay:
 //
-// Includes a complete tiny 5x7 bitmap font:
+//     No GRRLIB.
+//     No textures.
+//     No TTF.
+//     No font libraries.
 //
-//     0-9
-//     a-z
-//     A-Z
-//     Basic punctuation and symbols
+// Text is drawn with the tiny 5x7 bitmap font in font.c, using
+// small solid GX rectangles.
 //
-// Every character is drawn using small solid GX rectangles.
+// Controls
+// ------------------------------------------------------------
+//
+//     D-pad UP (menu closed)    open the menu
+//
+//     D-pad UP / DOWN           pick which value to edit
+//     D-pad LEFT / RIGHT        decrease / increase it by 0.01
+//                               (hold to repeat)
+//                               hold R = x10, hold L = x100
+//
+//     X                         close, throw the edits away
+//     Y                         close, apply the edits and
+//                               generate new islands
+//
+// How it works
+// ------------------------------------------------------------
+//
+// The menu never edits the real g_* variables while it is open.
+// It edits a private working copy (s_work). Only Y copies the
+// working copy into the real variables. That is what makes X
+// "close without changes" -- there is nothing to undo.
+//
+// To add a new tunable value later: declare it in common.h,
+// define it in common.c, then add ONE line to s_items below.
 //
 
 
@@ -24,1010 +45,259 @@
 #include <gccore.h>
 #include <ogc/pad.h>
 #include <stdbool.h>
+#include <stdio.h>
+
+#include "common.h"
+#include "font.h"
 
 
 // ============================================================
-// Debug menu state
-// ============================================================
-
-static bool s_debugVisible = false;
-
-
-// ============================================================
-// 5x7 Bitmap Font
+// Menu items
 //
-// Each character consists of 7 rows.
-// Each row uses 5 bits.
+// Every row in the menu is one entry in this table.
 //
-// Example:
+//     label   text shown in the menu
+//     type    how the value is edited and displayed
+//     target  pointer to the REAL variable in common.c
+//     min/max the value is clamped to this range
 //
-//     01110
-//     10001
-//     10001
-//     11111
-//     10001
-//     10001
-//     10001
+// MAX_ISLANDS and NUM_ISLAND_STYLES are compile-time constants
+// in common.h (they size arrays / match the enum), so they are
+// used here as limits instead of being editable rows.
+// ============================================================
+
+typedef enum
+{
+    DEBUG_FLOAT,   // steps of 0.01
+    DEBUG_INT,     // steps of 1
+    DEBUG_BOOL,    // left/right toggles ON / OFF
+    DEBUG_STYLE    // an int, shown together with its style name
+} DebugItemType;
+
+
+typedef struct
+{
+    const char    *label;
+    DebugItemType  type;
+    void          *target;
+    float          min;
+    float          max;
+} DebugItem;
+
+
+static const DebugItem s_items[] =
+{
+    // ---- World / wave ----
+    { "WORLD RADIUS",          DEBUG_FLOAT, &g_worldRadius,               10.0f,  500.0f },
+    { "WAVE FREQUENCY",        DEBUG_FLOAT, &g_waveFrequency,              0.0f,    5.0f },
+    { "WAVE AMPLITUDE",        DEBUG_FLOAT, &g_waveAmplitude,              0.0f,    2.0f },
+    { "WAVE SPEED",            DEBUG_FLOAT, &g_waveSpeed,                  0.0f,    0.5f },
+    { "BOAT CHANGE Y",         DEBUG_FLOAT, &g_boatChangeY,               -5.0f,    5.0f },
+    { "BASE Y",                DEBUG_FLOAT, &g_baseY,                    -20.0f,    5.0f },
+    { "ISLAND BASE Y",         DEBUG_FLOAT, &g_islandBaseY,              -20.0f,    5.0f },
+
+    // ---- Island generation ----
+    { "NUM ISLANDS",           DEBUG_INT,   &g_numIslands,                 1.0f,  (float)MAX_ISLANDS },
+    { "ISLAND RADIUS",         DEBUG_FLOAT, &g_islandDefaultRadius,        1.0f,   60.0f },
+    { "ISLAND HEIGHT SCALE",   DEBUG_FLOAT, &g_islandDefaultHeightScale,   0.05f,   5.0f },
+    { "ISLAND STYLE",          DEBUG_STYLE, &g_islandDefaultStyle,         0.0f,  (float)(NUM_ISLAND_STYLES - 1) },
+    { "ISLAND LON SEGMENTS",   DEBUG_INT,   &g_islandLonSegments,          3.0f,   64.0f },
+    { "ISLAND LAT SEGMENTS",   DEBUG_INT,   &g_islandLatSegments,          2.0f,   32.0f },
+
+    // ---- Streaming world ----
+    { "STREAM DISTANCE",       DEBUG_FLOAT, &g_worldStreamDistance,        1.0f,  500.0f },
+    { "CULL DISTANCE",         DEBUG_FLOAT, &g_worldCullDistance,          1.0f, 1000.0f },
+    { "ISLAND MIN SEPARATION", DEBUG_FLOAT, &g_islandMinSeparation,        1.0f,  200.0f },
+
+    // ---- Player ----
+    { "JUMP FORCE",            DEBUG_FLOAT, &g_jumpForce,                  0.0f,    3.0f },
+    { "PLAYER SNAP",           DEBUG_BOOL,  &g_playerSnap,                 0.0f,    1.0f },
+};
+
+#define ITEM_COUNT ((int)(sizeof(s_items) / sizeof(s_items[0])))
+
+
+// Names for the ISLAND STYLE row (same order as IslandColorStyle).
+static const char *const s_styleNames[NUM_ISLAND_STYLES] =
+{
+    "TROPICAL",
+    "VOLCANO",
+    "ARCTIC"
+};
+
+
+// ============================================================
+// Menu state
+// ============================================================
+
+static bool  s_open           = false;   // menu on screen?
+static bool  s_applyRequested = false;   // Y was pressed, main.c should regenerate
+static int   s_selected       = 0;       // highlighted row
+static float s_work[ITEM_COUNT];         // values being edited (NOT the real ones)
+
+// Frames each D-pad direction has been held (for auto-repeat).
+static int s_holdUp    = 0;
+static int s_holdDown  = 0;
+static int s_holdLeft  = 0;
+static int s_holdRight = 0;
+
+#define REPEAT_DELAY   20   // frames held before repeating starts (~1/3 s)
+#define REPEAT_RATE     3   // then fire every 3 frames (~20 per second)
+
+
+// ============================================================
+// Read / write the REAL variables as floats
 //
-// 1 = filled pixel
-// 0 = empty pixel
+// Every value type is stored as a float inside the working copy
+// so the editing code only has to deal with one type.
+// (Floats hold small ints and 0/1 exactly.)
+// ============================================================
+
+static float readTarget(const DebugItem *item)
+{
+    switch (item->type)
+    {
+        case DEBUG_FLOAT:
+            return *(const float *)item->target;
+
+        case DEBUG_BOOL:
+            return (*(const bool *)item->target) ? 1.0f : 0.0f;
+
+        default:    // DEBUG_INT, DEBUG_STYLE
+            return (float)(*(const int *)item->target);
+    }
+}
+
+
+static void writeTarget(const DebugItem *item, float value)
+{
+    switch (item->type)
+    {
+        case DEBUG_FLOAT:
+            *(float *)item->target = value;
+            break;
+
+        case DEBUG_BOOL:
+            *(bool *)item->target = (value > 0.5f);
+            break;
+
+        default:    // DEBUG_INT, DEBUG_STYLE (never negative here)
+            *(int *)item->target = (int)(value + 0.5f);
+            break;
+    }
+}
+
+
+// Real variables -> working copy.  (Done every time the menu opens.)
+static void loadWorkingCopy(void)
+{
+    int i;
+
+    for (i = 0; i < ITEM_COUNT; i++)
+        s_work[i] = readTarget(&s_items[i]);
+}
+
+
+// Working copy -> real variables.  (Done when Y is pressed.)
+static void applyWorkingCopy(void)
+{
+    int i;
+
+    for (i = 0; i < ITEM_COUNT; i++)
+        writeTarget(&s_items[i], s_work[i]);
+}
+
+
+// ============================================================
+// Editing
+// ============================================================
+
+// Round to the nearest 0.01 so repeated +/-0.01 steps never
+// build up float error (0.15 + 0.01 stays 0.16, not 0.16000001).
+static float snapToHundredth(float v)
+{
+    float scaled = v * 100.0f;
+    int   whole  = (int)(scaled + (scaled < 0.0f ? -0.5f : 0.5f));
+
+    return (float)whole / 100.0f;
+}
+
+
+// Change one row of the working copy.
 //
-// Characters are stored as:
+//     dir   = -1 (left) or +1 (right)
+//     scale = 1, 10 or 100 (R / L held). Only floats use it;
+//             ints always move by 1.
+static void adjustItem(int index, int dir, int scale)
+{
+    const DebugItem *item  = &s_items[index];
+    float            value = s_work[index];
+
+    switch (item->type)
+    {
+        case DEBUG_FLOAT:
+
+            // 0.01, 0.05, 0.1
+            value += (float)dir * 0.1f * (float)scale;
+            value  = snapToHundredth(value);
+            break;
+
+        case DEBUG_BOOL:
+            value = (value > 0.5f) ? 0.0f : 1.0f;   // either direction toggles
+            break;
+
+        default:    // DEBUG_INT, DEBUG_STYLE
+            value += (float)dir;
+            break;
+    }
+
+    if (value < item->min) value = item->min;
+    if (value > item->max) value = item->max;
+
+    s_work[index] = value;
+}
+
+
+// ============================================================
+// D-pad auto-repeat
 //
-//     { row0, row1, row2, row3, row4, row5, row6 }
-//
+// Returns true on the frame the button was pressed, and then
+// again and again while it stays held (after a short delay).
+// Without this, going from 80.00 to 100.00 would take 2000
+// separate presses.
 // ============================================================
 
+static bool buttonRepeat(u32 mask, int *heldFrames)
+{
+    u32 down = PAD_ButtonsDown(0);
+    u32 held = PAD_ButtonsHeld(0);
 
-// ============================================================
-// Numbers 0-9
-// ============================================================
+    if (down & mask)
+    {
+        *heldFrames = 0;
+        return true;
+    }
 
-static const unsigned char FONT_0[7] = {
-    0b01110,
-    0b10001,
-    0b10011,
-    0b10101,
-    0b11001,
-    0b10001,
-    0b01110
-};
+    if (held & mask)
+    {
+        (*heldFrames)++;
 
-static const unsigned char FONT_1[7] = {
-    0b00100,
-    0b01100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b01110
-};
+        if (*heldFrames >= REPEAT_DELAY &&
+            ((*heldFrames - REPEAT_DELAY) % REPEAT_RATE) == 0)
+        {
+            return true;
+        }
 
-static const unsigned char FONT_2[7] = {
-    0b01110,
-    0b10001,
-    0b00001,
-    0b00010,
-    0b00100,
-    0b01000,
-    0b11111
-};
+        return false;
+    }
 
-static const unsigned char FONT_3[7] = {
-    0b11110,
-    0b00001,
-    0b00001,
-    0b01110,
-    0b00001,
-    0b00001,
-    0b11110
-};
-
-static const unsigned char FONT_4[7] = {
-    0b00010,
-    0b00110,
-    0b01010,
-    0b10010,
-    0b11111,
-    0b00010,
-    0b00010
-};
-
-static const unsigned char FONT_5[7] = {
-    0b11111,
-    0b10000,
-    0b10000,
-    0b11110,
-    0b00001,
-    0b00001,
-    0b11110
-};
-
-static const unsigned char FONT_6[7] = {
-    0b01110,
-    0b10000,
-    0b10000,
-    0b11110,
-    0b10001,
-    0b10001,
-    0b01110
-};
-
-static const unsigned char FONT_7[7] = {
-    0b11111,
-    0b00001,
-    0b00010,
-    0b00100,
-    0b01000,
-    0b01000,
-    0b01000
-};
-
-static const unsigned char FONT_8[7] = {
-    0b01110,
-    0b10001,
-    0b10001,
-    0b01110,
-    0b10001,
-    0b10001,
-    0b01110
-};
-
-static const unsigned char FONT_9[7] = {
-    0b01110,
-    0b10001,
-    0b10001,
-    0b01111,
-    0b00001,
-    0b00001,
-    0b01110
-};
+    *heldFrames = 0;
+    return false;
+}
 
 
 // ============================================================
-// Lowercase a-z
-// ============================================================
-
-static const unsigned char FONT_a[7] = {
-    0b00000,
-    0b00000,
-    0b01110,
-    0b00001,
-    0b01111,
-    0b10001,
-    0b01111
-};
-
-static const unsigned char FONT_b[7] = {
-    0b10000,
-    0b10000,
-    0b10110,
-    0b11001,
-    0b10001,
-    0b10001,
-    0b11110
-};
-
-static const unsigned char FONT_c[7] = {
-    0b00000,
-    0b00000,
-    0b01111,
-    0b10000,
-    0b10000,
-    0b10000,
-    0b01111
-};
-
-static const unsigned char FONT_d[7] = {
-    0b00001,
-    0b00001,
-    0b01101,
-    0b10011,
-    0b10001,
-    0b10001,
-    0b01111
-};
-
-static const unsigned char FONT_e[7] = {
-    0b00000,
-    0b00000,
-    0b01110,
-    0b10001,
-    0b11111,
-    0b10000,
-    0b01110
-};
-
-static const unsigned char FONT_f[7] = {
-    0b00110,
-    0b01001,
-    0b01000,
-    0b11100,
-    0b01000,
-    0b01000,
-    0b01000
-};
-
-static const unsigned char FONT_g[7] = {
-    0b00000,
-    0b00000,
-    0b01111,
-    0b10001,
-    0b01111,
-    0b00001,
-    0b11110
-};
-
-static const unsigned char FONT_h[7] = {
-    0b10000,
-    0b10000,
-    0b10110,
-    0b11001,
-    0b10001,
-    0b10001,
-    0b10001
-};
-
-static const unsigned char FONT_i[7] = {
-    0b00100,
-    0b00000,
-    0b01100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b01110
-};
-
-static const unsigned char FONT_j[7] = {
-    0b00010,
-    0b00000,
-    0b00110,
-    0b00010,
-    0b00010,
-    0b10010,
-    0b01100
-};
-
-static const unsigned char FONT_k[7] = {
-    0b10000,
-    0b10000,
-    0b10010,
-    0b10100,
-    0b11000,
-    0b10100,
-    0b10010
-};
-
-static const unsigned char FONT_l[7] = {
-    0b01100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b01110
-};
-
-static const unsigned char FONT_m[7] = {
-    0b00000,
-    0b00000,
-    0b11010,
-    0b10101,
-    0b10101,
-    0b10101,
-    0b10101
-};
-
-static const unsigned char FONT_n[7] = {
-    0b00000,
-    0b00000,
-    0b10110,
-    0b11001,
-    0b10001,
-    0b10001,
-    0b10001
-};
-
-static const unsigned char FONT_o[7] = {
-    0b00000,
-    0b00000,
-    0b01110,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b01110
-};
-
-static const unsigned char FONT_p[7] = {
-    0b00000,
-    0b00000,
-    0b11110,
-    0b10001,
-    0b11110,
-    0b10000,
-    0b10000
-};
-
-static const unsigned char FONT_q[7] = {
-    0b00000,
-    0b00000,
-    0b01111,
-    0b10001,
-    0b01111,
-    0b00001,
-    0b00001
-};
-
-static const unsigned char FONT_r[7] = {
-    0b00000,
-    0b00000,
-    0b10110,
-    0b11001,
-    0b10000,
-    0b10000,
-    0b10000
-};
-
-static const unsigned char FONT_s[7] = {
-    0b00000,
-    0b00000,
-    0b01111,
-    0b10000,
-    0b01110,
-    0b00001,
-    0b11110
-};
-
-static const unsigned char FONT_t[7] = {
-    0b01000,
-    0b01000,
-    0b11110,
-    0b01000,
-    0b01000,
-    0b01001,
-    0b00110
-};
-
-static const unsigned char FONT_u[7] = {
-    0b00000,
-    0b00000,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10011,
-    0b01101
-};
-
-static const unsigned char FONT_v[7] = {
-    0b00000,
-    0b00000,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b01010,
-    0b00100
-};
-
-static const unsigned char FONT_w[7] = {
-    0b00000,
-    0b00000,
-    0b10001,
-    0b10001,
-    0b10101,
-    0b10101,
-    0b01010
-};
-
-static const unsigned char FONT_x[7] = {
-    0b00000,
-    0b00000,
-    0b10001,
-    0b01010,
-    0b00100,
-    0b01010,
-    0b10001
-};
-
-static const unsigned char FONT_y[7] = {
-    0b00000,
-    0b00000,
-    0b10001,
-    0b10001,
-    0b01111,
-    0b00001,
-    0b11110
-};
-
-static const unsigned char FONT_z[7] = {
-    0b00000,
-    0b00000,
-    0b11111,
-    0b00010,
-    0b00100,
-    0b01000,
-    0b11111
-};
-
-
-// ============================================================
-// Uppercase A-Z
-//
-// These are included too so debug text can use normal
-// uppercase letters without needing to convert strings.
-// ============================================================
-
-static const unsigned char FONT_A[7] = {
-    0b01110,
-    0b10001,
-    0b10001,
-    0b11111,
-    0b10001,
-    0b10001,
-    0b10001
-};
-
-static const unsigned char FONT_B[7] = {
-    0b11110,
-    0b10001,
-    0b10001,
-    0b11110,
-    0b10001,
-    0b10001,
-    0b11110
-};
-
-static const unsigned char FONT_C[7] = {
-    0b01111,
-    0b10000,
-    0b10000,
-    0b10000,
-    0b10000,
-    0b10000,
-    0b01111
-};
-
-static const unsigned char FONT_D[7] = {
-    0b11110,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b11110
-};
-
-static const unsigned char FONT_E[7] = {
-    0b11111,
-    0b10000,
-    0b10000,
-    0b11110,
-    0b10000,
-    0b10000,
-    0b11111
-};
-
-static const unsigned char FONT_F[7] = {
-    0b11111,
-    0b10000,
-    0b10000,
-    0b11110,
-    0b10000,
-    0b10000,
-    0b10000
-};
-
-static const unsigned char FONT_G[7] = {
-    0b01111,
-    0b10000,
-    0b10000,
-    0b10111,
-    0b10001,
-    0b10001,
-    0b01111
-};
-
-static const unsigned char FONT_H[7] = {
-    0b10001,
-    0b10001,
-    0b10001,
-    0b11111,
-    0b10001,
-    0b10001,
-    0b10001
-};
-
-static const unsigned char FONT_I[7] = {
-    0b01110,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b01110
-};
-
-static const unsigned char FONT_J[7] = {
-    0b00111,
-    0b00010,
-    0b00010,
-    0b00010,
-    0b10010,
-    0b10010,
-    0b01100
-};
-
-static const unsigned char FONT_K[7] = {
-    0b10001,
-    0b10010,
-    0b10100,
-    0b11000,
-    0b10100,
-    0b10010,
-    0b10001
-};
-
-static const unsigned char FONT_L[7] = {
-    0b10000,
-    0b10000,
-    0b10000,
-    0b10000,
-    0b10000,
-    0b10000,
-    0b11111
-};
-
-static const unsigned char FONT_M[7] = {
-    0b10001,
-    0b11011,
-    0b10101,
-    0b10101,
-    0b10001,
-    0b10001,
-    0b10001
-};
-
-static const unsigned char FONT_N[7] = {
-    0b10001,
-    0b11001,
-    0b10101,
-    0b10011,
-    0b10001,
-    0b10001,
-    0b10001
-};
-
-static const unsigned char FONT_O[7] = {
-    0b01110,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b01110
-};
-
-static const unsigned char FONT_P[7] = {
-    0b11110,
-    0b10001,
-    0b10001,
-    0b11110,
-    0b10000,
-    0b10000,
-    0b10000
-};
-
-static const unsigned char FONT_Q[7] = {
-    0b01110,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10101,
-    0b10010,
-    0b01101
-};
-
-static const unsigned char FONT_R[7] = {
-    0b11110,
-    0b10001,
-    0b10001,
-    0b11110,
-    0b10100,
-    0b10010,
-    0b10001
-};
-
-static const unsigned char FONT_S[7] = {
-    0b01111,
-    0b10000,
-    0b10000,
-    0b01110,
-    0b00001,
-    0b00001,
-    0b11110
-};
-
-static const unsigned char FONT_T[7] = {
-    0b11111,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100
-};
-
-static const unsigned char FONT_U[7] = {
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b01110
-};
-
-static const unsigned char FONT_V[7] = {
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10001,
-    0b01010,
-    0b00100
-};
-
-static const unsigned char FONT_W[7] = {
-    0b10001,
-    0b10001,
-    0b10001,
-    0b10101,
-    0b10101,
-    0b11011,
-    0b10001
-};
-
-static const unsigned char FONT_X[7] = {
-    0b10001,
-    0b10001,
-    0b01010,
-    0b00100,
-    0b01010,
-    0b10001,
-    0b10001
-};
-
-static const unsigned char FONT_Y[7] = {
-    0b10001,
-    0b10001,
-    0b01010,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100
-};
-
-static const unsigned char FONT_Z[7] = {
-    0b11111,
-    0b00001,
-    0b00010,
-    0b00100,
-    0b01000,
-    0b10000,
-    0b11111
-};
-
-
-// ============================================================
-// Symbols
-// ============================================================
-
-static const unsigned char FONT_SPACE[7] = {
-    0, 0, 0, 0, 0, 0, 0
-};
-
-static const unsigned char FONT_EXCLAMATION[7] = {
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00000,
-    0b00100
-};
-
-static const unsigned char FONT_QUOTE[7] = {
-    0b01010,
-    0b01010,
-    0b01010,
-    0,
-    0,
-    0,
-    0
-};
-
-static const unsigned char FONT_HASH[7] = {
-    0b01010,
-    0b11111,
-    0b01010,
-    0b01010,
-    0b11111,
-    0b01010,
-    0
-};
-
-static const unsigned char FONT_DOLLAR[7] = {
-    0b00100,
-    0b01111,
-    0b10100,
-    0b01110,
-    0b00101,
-    0b11110,
-    0b00100
-};
-
-static const unsigned char FONT_PERCENT[7] = {
-    0b11001,
-    0b11010,
-    0b00100,
-    0b01000,
-    0b10110,
-    0b00110,
-    0
-};
-
-static const unsigned char FONT_AMPERSAND[7] = {
-    0b01100,
-    0b10010,
-    0b10100,
-    0b01000,
-    0b10101,
-    0b10010,
-    0b01101
-};
-
-static const unsigned char FONT_APOSTROPHE[7] = {
-    0b00100,
-    0b00100,
-    0b01000,
-    0,
-    0,
-    0,
-    0
-};
-
-static const unsigned char FONT_LPAREN[7] = {
-    0b00010,
-    0b00100,
-    0b01000,
-    0b01000,
-    0b01000,
-    0b00100,
-    0b00010
-};
-
-static const unsigned char FONT_RPAREN[7] = {
-    0b01000,
-    0b00100,
-    0b00010,
-    0b00010,
-    0b00010,
-    0b00100,
-    0b01000
-};
-
-static const unsigned char FONT_STAR[7] = {
-    0b00100,
-    0b10101,
-    0b01110,
-    0b11111,
-    0b01110,
-    0b10101,
-    0b00100
-};
-
-static const unsigned char FONT_PLUS[7] = {
-    0b00100,
-    0b00100,
-    0b00100,
-    0b11111,
-    0b00100,
-    0b00100,
-    0b00100
-};
-
-static const unsigned char FONT_COMMA[7] = {
-    0,
-    0,
-    0,
-    0,
-    0b00110,
-    0b00100,
-    0b01000
-};
-
-static const unsigned char FONT_MINUS[7] = {
-    0,
-    0,
-    0,
-    0b11111,
-    0,
-    0,
-    0
-};
-
-static const unsigned char FONT_PERIOD[7] = {
-    0,
-    0,
-    0,
-    0,
-    0,
-    0b00110,
-    0b00110
-};
-
-static const unsigned char FONT_SLASH[7] = {
-    0b00001,
-    0b00010,
-    0b00100,
-    0b01000,
-    0b10000,
-    0,
-    0
-};
-
-static const unsigned char FONT_COLON[7] = {
-    0,
-    0b00110,
-    0b00110,
-    0,
-    0,
-    0b00110,
-    0b00110
-};
-
-static const unsigned char FONT_SEMICOLON[7] = {
-    0,
-    0b00110,
-    0b00110,
-    0,
-    0b00110,
-    0b00100,
-    0b01000
-};
-
-static const unsigned char FONT_LESS[7] = {
-    0b00010,
-    0b00100,
-    0b01000,
-    0b10000,
-    0b01000,
-    0b00100,
-    0b00010
-};
-
-static const unsigned char FONT_EQUAL[7] = {
-    0,
-    0b11111,
-    0,
-    0b11111,
-    0,
-    0,
-    0
-};
-
-static const unsigned char FONT_GREATER[7] = {
-    0b01000,
-    0b00100,
-    0b00010,
-    0b00001,
-    0b00010,
-    0b00100,
-    0b01000
-};
-
-static const unsigned char FONT_QUESTION[7] = {
-    0b01110,
-    0b10001,
-    0b00001,
-    0b00010,
-    0b00100,
-    0,
-    0b00100
-};
-
-static const unsigned char FONT_AT[7] = {
-    0b01110,
-    0b10001,
-    0b10111,
-    0b10101,
-    0b10111,
-    0b10000,
-    0b01111
-};
-
-static const unsigned char FONT_LBRACKET[7] = {
-    0b01110,
-    0b01000,
-    0b01000,
-    0b01000,
-    0b01000,
-    0b01000,
-    0b01110
-};
-
-static const unsigned char FONT_BACKSLASH[7] = {
-    0b10000,
-    0b01000,
-    0b00100,
-    0b00010,
-    0b00001,
-    0,
-    0
-};
-
-static const unsigned char FONT_RBRACKET[7] = {
-    0b01110,
-    0b00010,
-    0b00010,
-    0b00010,
-    0b00010,
-    0b00010,
-    0b01110
-};
-
-static const unsigned char FONT_CARET[7] = {
-    0b00100,
-    0b01010,
-    0b10001,
-    0,
-    0,
-    0,
-    0
-};
-
-static const unsigned char FONT_UNDERSCORE[7] = {
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0b11111
-};
-
-static const unsigned char FONT_BACKTICK[7] = {
-    0b01000,
-    0b00100,
-    0,
-    0,
-    0,
-    0,
-    0
-};
-
-static const unsigned char FONT_LBRACE[7] = {
-    0b00011,
-    0b00100,
-    0b00100,
-    0b11000,
-    0b00100,
-    0b00100,
-    0b00011
-};
-
-static const unsigned char FONT_PIPE[7] = {
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100,
-    0b00100
-};
-
-static const unsigned char FONT_RBRACE[7] = {
-    0b11000,
-    0b00100,
-    0b00100,
-    0b00011,
-    0b00100,
-    0b00100,
-    0b11000
-};
-
-static const unsigned char FONT_TILDE[7] = {
-    0,
-    0b01001,
-    0b10110,
-    0,
-    0,
-    0,
-    0
-};
-
-
-// ============================================================
-// Draw a solid 2D rectangle
+// Draw a quad's four vertices
 //
 // IMPORTANT:
 // gx_utils configures GX_VA_CLR0 as GX_RGB8.
@@ -1036,6 +306,37 @@ static const unsigned char FONT_TILDE[7] = {
 //
 // We also do NOT change the vertex descriptors here.
 // They are already configured by init_graphics().
+//
+// This does NOT call GX_Begin / GX_End, so several quads can
+// share one GX_Begin (see drawGlyph).
+// ============================================================
+
+static void emitQuad(
+    f32 x1,
+    f32 y1,
+    f32 x2,
+    f32 y2,
+    u8 r,
+    u8 g,
+    u8 b
+)
+{
+    GX_Position3f32(x1, y1, 0.0f);
+    GX_Color3u8(r, g, b);
+
+    GX_Position3f32(x2, y1, 0.0f);
+    GX_Color3u8(r, g, b);
+
+    GX_Position3f32(x2, y2, 0.0f);
+    GX_Color3u8(r, g, b);
+
+    GX_Position3f32(x1, y2, 0.0f);
+    GX_Color3u8(r, g, b);
+}
+
+
+// ============================================================
+// Draw a solid 2D rectangle
 // ============================================================
 
 static void drawRect2D(
@@ -1050,17 +351,7 @@ static void drawRect2D(
 {
     GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
 
-        GX_Position3f32(x1, y1, 0.0f);
-        GX_Color3u8(r, g, b);
-
-        GX_Position3f32(x2, y1, 0.0f);
-        GX_Color3u8(r, g, b);
-
-        GX_Position3f32(x2, y2, 0.0f);
-        GX_Color3u8(r, g, b);
-
-        GX_Position3f32(x1, y2, 0.0f);
-        GX_Color3u8(r, g, b);
+        emitQuad(x1, y1, x2, y2, r, g, b);
 
     GX_End();
 }
@@ -1068,7 +359,24 @@ static void drawRect2D(
 
 // ============================================================
 // Draw one 5x7 bitmap glyph
+//
+// The whole menu is about 500 characters, so this is kept cheap:
+//
+//   * Lit pixels that touch on the same row are merged into one
+//     wide rectangle ("run"). Row 11011 is 2 quads, not 4.
+//   * The whole glyph goes out in ONE GX_Begin / GX_End.
+//
+// Pass 1 finds the runs (so we know how many vertices to
+// announce), pass 2 draws them.
 // ============================================================
+
+typedef struct
+{
+    u8 row;
+    u8 start;
+    u8 len;
+} GlyphRun;
+
 
 static void drawGlyph(
     const unsigned char *glyph,
@@ -1080,165 +388,63 @@ static void drawGlyph(
     u8 b
 )
 {
-    int row;
-    int col;
+    GlyphRun runs[7 * 3];   // at most 3 runs per row (pattern 10101)
+    int      count = 0;
+    int      row;
+    int      col;
+    int      i;
 
+    // ---- Pass 1: find the runs ----
     for (row = 0; row < 7; row++)
     {
         unsigned char bits = glyph[row];
 
-        for (col = 0; col < 5; col++)
+        col = 0;
+
+        while (col < 5)
         {
             if (bits & (1 << (4 - col)))
             {
-                f32 px = x + ((f32)col * scale);
-                f32 py = y + ((f32)row * scale);
+                int start = col;
 
-                drawRect2D(
-                    px,
-                    py,
-                    px + scale,
-                    py + scale,
-                    r,
-                    g,
-                    b
-                );
+                while (col < 5 && (bits & (1 << (4 - col))))
+                    col++;
+
+                runs[count].row   = (u8)row;
+                runs[count].start = (u8)start;
+                runs[count].len   = (u8)(col - start);
+                count++;
+            }
+            else
+            {
+                col++;
             }
         }
     }
-}
 
+    if (count == 0)
+        return;     // e.g. the space character
 
-// ============================================================
-// Get bitmap for a character
-//
-// This keeps drawText() simple.
-//
-// Unsupported characters return NULL and are simply skipped.
-// ============================================================
+    // ---- Pass 2: draw them ----
+    GX_Begin(GX_QUADS, GX_VTXFMT0, count * 4);
 
-static const unsigned char *getGlyph(char c)
-{
-    // --------------------------------------------------------
-    // Numbers
-    // --------------------------------------------------------
+        for (i = 0; i < count; i++)
+        {
+            f32 px = x + ((f32)runs[i].start * scale);
+            f32 py = y + ((f32)runs[i].row   * scale);
 
-    switch (c)
-    {
-        case '0': return FONT_0;
-        case '1': return FONT_1;
-        case '2': return FONT_2;
-        case '3': return FONT_3;
-        case '4': return FONT_4;
-        case '5': return FONT_5;
-        case '6': return FONT_6;
-        case '7': return FONT_7;
-        case '8': return FONT_8;
-        case '9': return FONT_9;
+            emitQuad(
+                px,
+                py,
+                px + ((f32)runs[i].len * scale),
+                py + scale,
+                r,
+                g,
+                b
+            );
+        }
 
-        // ----------------------------------------------------
-        // Lowercase
-        // ----------------------------------------------------
-
-        case 'a': return FONT_a;
-        case 'b': return FONT_b;
-        case 'c': return FONT_c;
-        case 'd': return FONT_d;
-        case 'e': return FONT_e;
-        case 'f': return FONT_f;
-        case 'g': return FONT_g;
-        case 'h': return FONT_h;
-        case 'i': return FONT_i;
-        case 'j': return FONT_j;
-        case 'k': return FONT_k;
-        case 'l': return FONT_l;
-        case 'm': return FONT_m;
-        case 'n': return FONT_n;
-        case 'o': return FONT_o;
-        case 'p': return FONT_p;
-        case 'q': return FONT_q;
-        case 'r': return FONT_r;
-        case 's': return FONT_s;
-        case 't': return FONT_t;
-        case 'u': return FONT_u;
-        case 'v': return FONT_v;
-        case 'w': return FONT_w;
-        case 'x': return FONT_x;
-        case 'y': return FONT_y;
-        case 'z': return FONT_z;
-
-        // ----------------------------------------------------
-        // Uppercase
-        // ----------------------------------------------------
-
-        case 'A': return FONT_A;
-        case 'B': return FONT_B;
-        case 'C': return FONT_C;
-        case 'D': return FONT_D;
-        case 'E': return FONT_E;
-        case 'F': return FONT_F;
-        case 'G': return FONT_G;
-        case 'H': return FONT_H;
-        case 'I': return FONT_I;
-        case 'J': return FONT_J;
-        case 'K': return FONT_K;
-        case 'L': return FONT_L;
-        case 'M': return FONT_M;
-        case 'N': return FONT_N;
-        case 'O': return FONT_O;
-        case 'P': return FONT_P;
-        case 'Q': return FONT_Q;
-        case 'R': return FONT_R;
-        case 'S': return FONT_S;
-        case 'T': return FONT_T;
-        case 'U': return FONT_U;
-        case 'V': return FONT_V;
-        case 'W': return FONT_W;
-        case 'X': return FONT_X;
-        case 'Y': return FONT_Y;
-        case 'Z': return FONT_Z;
-
-        // ----------------------------------------------------
-        // Symbols
-        // ----------------------------------------------------
-
-        case ' ': return FONT_SPACE;
-        case '!': return FONT_EXCLAMATION;
-        case '"': return FONT_QUOTE;
-        case '#': return FONT_HASH;
-        case '$': return FONT_DOLLAR;
-        case '%': return FONT_PERCENT;
-        case '&': return FONT_AMPERSAND;
-        case '\'': return FONT_APOSTROPHE;
-        case '(': return FONT_LPAREN;
-        case ')': return FONT_RPAREN;
-        case '*': return FONT_STAR;
-        case '+': return FONT_PLUS;
-        case ',': return FONT_COMMA;
-        case '-': return FONT_MINUS;
-        case '.': return FONT_PERIOD;
-        case '/': return FONT_SLASH;
-        case ':': return FONT_COLON;
-        case ';': return FONT_SEMICOLON;
-        case '<': return FONT_LESS;
-        case '=': return FONT_EQUAL;
-        case '>': return FONT_GREATER;
-        case '?': return FONT_QUESTION;
-        case '@': return FONT_AT;
-        case '[': return FONT_LBRACKET;
-        case '\\': return FONT_BACKSLASH;
-        case ']': return FONT_RBRACKET;
-        case '^': return FONT_CARET;
-        case '_': return FONT_UNDERSCORE;
-        case '`': return FONT_BACKTICK;
-        case '{': return FONT_LBRACE;
-        case '|': return FONT_PIPE;
-        case '}': return FONT_RBRACE;
-        case '~': return FONT_TILDE;
-
-        default:
-            return NULL;
-    }
+    GX_End();
 }
 
 
@@ -1335,26 +541,201 @@ static void drawText(
 
 
 // ============================================================
+// Turn one working value into text
+//
+//     floats  ->  "80.00", "0.15", "-1.00"
+//     ints    ->  "5"
+//     bools   ->  "ON" / "OFF"
+//     style   ->  "0 TROPICAL"
+//
+// Floats are printed with integer maths on purpose, so this
+// does not depend on printf float support.
+// ============================================================
+
+static void formatValue(int index, char *out, size_t size)
+{
+    const DebugItem *item  = &s_items[index];
+    float            value = s_work[index];
+
+    switch (item->type)
+    {
+        case DEBUG_FLOAT:
+        {
+            bool negative   = (value < 0.0f);
+            int  hundredths = (int)((negative ? -value : value) * 100.0f + 0.5f);
+
+            snprintf(
+                out,
+                size,
+                "%s%d.%02d",
+                (negative && hundredths != 0) ? "-" : "",
+                hundredths / 100,
+                hundredths % 100
+            );
+            break;
+        }
+
+        case DEBUG_BOOL:
+            snprintf(out, size, "%s", (value > 0.5f) ? "ON" : "OFF");
+            break;
+
+        case DEBUG_STYLE:
+        {
+            int         style = (int)(value + 0.5f);
+            const char *name  = "?";
+
+            if (style >= 0 && style < NUM_ISLAND_STYLES && s_styleNames[style] != NULL)
+                name = s_styleNames[style];
+
+            snprintf(out, size, "%d %s", style, name);
+            break;
+        }
+
+        default:    // DEBUG_INT
+            snprintf(out, size, "%d", (int)(value + 0.5f));
+            break;
+    }
+}
+
+
+// ============================================================
 // Initialize
 // ============================================================
 
 void initDebugMenu(void)
 {
-    s_debugVisible = false;
+    s_open           = false;
+    s_applyRequested = false;
+    s_selected       = 0;
+
+    s_holdUp    = 0;
+    s_holdDown  = 0;
+    s_holdLeft  = 0;
+    s_holdRight = 0;
+
+    loadWorkingCopy();
+}
+
+
+// ============================================================
+// Public state queries (used by main.c)
+// ============================================================
+
+bool debugMenuIsOpen(void)
+{
+    return s_open;
+}
+
+
+bool debugMenuConsumeApply(void)
+{
+    bool requested   = s_applyRequested;
+    s_applyRequested = false;
+    return requested;
 }
 
 
 // ============================================================
 // Update
+//
+// Call once per frame, right after PAD_ScanPads().
 // ============================================================
 
 void updateDebugMenu(void)
 {
-    if (PAD_ButtonsDown(0) & PAD_BUTTON_Y)
+    u32 down = PAD_ButtonsDown(0);
+    u32 held = PAD_ButtonsHeld(0);
+    int scale;
+
+    // --------------------------------------------------------
+    // Closed: the only thing we listen for is D-pad UP.
+    // --------------------------------------------------------
+
+    if (!s_open)
     {
-        s_debugVisible = !s_debugVisible;
+        if (down & PAD_BUTTON_UP)
+        {
+            loadWorkingCopy();      // start from the current real values
+            s_open = true;
+
+            s_holdUp    = 0;
+            s_holdDown  = 0;
+            s_holdLeft  = 0;
+            s_holdRight = 0;
+        }
+
+        return;
     }
+
+    // --------------------------------------------------------
+    // X: close and forget the edits.
+    // (The real variables were never touched.)
+    // --------------------------------------------------------
+
+    if (down & PAD_BUTTON_X)
+    {
+        s_open = false;
+        return;
+    }
+
+    // --------------------------------------------------------
+    // Y: close and apply the edits.
+    // main.c sees debugMenuConsumeApply() and regenerates.
+    // --------------------------------------------------------
+
+    if (down & PAD_BUTTON_Y)
+    {
+        applyWorkingCopy();
+        s_applyRequested = true;
+        s_open           = false;
+        return;
+    }
+
+    // --------------------------------------------------------
+    // UP / DOWN: move the highlight (wraps around).
+    // --------------------------------------------------------
+
+    if (buttonRepeat(PAD_BUTTON_UP, &s_holdUp))
+        s_selected = (s_selected + ITEM_COUNT - 1) % ITEM_COUNT;
+
+    if (buttonRepeat(PAD_BUTTON_DOWN, &s_holdDown))
+        s_selected = (s_selected + 1) % ITEM_COUNT;
+
+    // --------------------------------------------------------
+    // LEFT / RIGHT: change the highlighted value.
+    //
+    // Hold R for bigger steps (x10), L for even bigger (x100).
+    // --------------------------------------------------------
+
+    scale = 1;
+
+    if (held & PAD_TRIGGER_R) scale = 10;
+    if (held & PAD_TRIGGER_L) scale = 100;
+
+    if (buttonRepeat(PAD_BUTTON_LEFT, &s_holdLeft))
+        adjustItem(s_selected, -1, scale);
+
+    if (buttonRepeat(PAD_BUTTON_RIGHT, &s_holdRight))
+        adjustItem(s_selected, +1, scale);
 }
+
+
+// ============================================================
+// Menu layout (screen is 640 x 480)
+// ============================================================
+
+#define PANEL_X1     60.0f
+#define PANEL_Y1     20.0f
+#define PANEL_X2    580.0f
+#define PANEL_Y2    456.0f
+
+#define LABEL_X      80.0f
+#define VALUE_X     360.0f
+
+#define ROW_TOP      66.0f
+#define ROW_HEIGHT   18.0f
+
+#define TEXT_SCALE    2.0f      // 5x7 font -> 10x14 pixels per character
 
 
 // ============================================================
@@ -1363,7 +744,10 @@ void updateDebugMenu(void)
 
 void drawDebugMenu(void)
 {
-    if (!s_debugVisible)
+    char buffer[32];
+    int  i;
+
+    if (!s_open)
         return;
 
 
@@ -1411,6 +795,9 @@ void drawDebugMenu(void)
 
     // --------------------------------------------------------
     // Turn off depth testing.
+    //
+    // With no depth test, things drawn LATER appear on top, so
+    // the order below matters: panel, highlight bar, then text.
     // --------------------------------------------------------
 
     GX_SetZMode(
@@ -1421,65 +808,33 @@ void drawDebugMenu(void)
 
 
     // --------------------------------------------------------
-    // Black debug window.
+    // Panel: grey border, black fill.
     // --------------------------------------------------------
 
     drawRect2D(
-        200.0f,
-        100.0f,
-        440.0f,
-        380.0f,
+        PANEL_X1 - 2.0f,
+        PANEL_Y1 - 2.0f,
+        PANEL_X2 + 2.0f,
+        PANEL_Y2 + 2.0f,
+        90,
+        90,
+        90
+    );
+
+    drawRect2D(
+        PANEL_X1,
+        PANEL_Y1,
+        PANEL_X2,
+        PANEL_Y2,
         0,
         0,
         0
     );
 
-
-    // --------------------------------------------------------
-    // Example debug text.
-    //
-    // Scale 4 means:
-    //
-    //     5 x 7 pixels
-    //     each pixel = 4x4 screen pixels
-    //
-    // Character spacing = 24 pixels.
-    // --------------------------------------------------------
-
     drawText(
         "DEBUG MENU",
-        220.0f,
-        120.0f,
-        4.0f,
-        255,
-        255,
-        255
-    );
-
-
-    // --------------------------------------------------------
-    // Numbers.
-    // --------------------------------------------------------
-
-    drawText(
-        "0123456789",
-        220.0f,
-        160.0f,
-        4.0f,
-        255,
-        255,
-        255
-    );
-
-
-    // --------------------------------------------------------
-    // Lowercase alphabet.
-    // --------------------------------------------------------
-
-    drawText(
-        "abcdefghijklmnopqrstuvwxyz",
-        220.0f,
-        200.0f,
+        LABEL_X,
+        32.0f,
         3.0f,
         255,
         255,
@@ -1488,57 +843,86 @@ void drawDebugMenu(void)
 
 
     // --------------------------------------------------------
-    // Uppercase alphabet.
+    // One row per item.
+    //
+    //     selected row  -> blue bar, yellow text
+    //     other rows    -> light grey text
+    //     edited value  -> green (differs from the real value)
+    // --------------------------------------------------------
+
+    for (i = 0; i < ITEM_COUNT; i++)
+    {
+        f32  y        = ROW_TOP + ((f32)i * ROW_HEIGHT);
+        bool selected = (i == s_selected);
+        bool changed  = (s_work[i] != readTarget(&s_items[i]));
+
+        u8 labelR = selected ? 255 : 210;
+        u8 labelG = selected ? 255 : 210;
+        u8 labelB = selected ?   0 : 210;
+
+        u8 valueR = changed ?  90 : labelR;
+        u8 valueG = changed ? 255 : labelG;
+        u8 valueB = changed ?  90 : labelB;
+
+        if (selected)
+        {
+            drawRect2D(
+                PANEL_X1 + 8.0f,
+                y - 2.0f,
+                PANEL_X2 - 8.0f,
+                y + 16.0f,
+                0,
+                0,
+                110
+            );
+        }
+
+        drawText(
+            s_items[i].label,
+            LABEL_X,
+            y,
+            TEXT_SCALE,
+            labelR,
+            labelG,
+            labelB
+        );
+
+        formatValue(i, buffer, sizeof(buffer));
+
+        drawText(
+            buffer,
+            VALUE_X,
+            y,
+            TEXT_SCALE,
+            valueR,
+            valueG,
+            valueB
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // Help text.
     // --------------------------------------------------------
 
     drawText(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        220.0f,
-        225.0f,
-        3.0f,
-        255,
-        255,
-        255
+        "UP/DOWN: SELECT  LEFT/RIGHT: CHANGE",
+        LABEL_X,
+        402.0f,
+        TEXT_SCALE,
+        170,
+        170,
+        170
     );
 
-
-    // --------------------------------------------------------
-    // Basic symbols.
-    // --------------------------------------------------------
-
     drawText(
-        "!\"#$%&'()*+,-./",
-        220.0f,
-        250.0f,
-        3.0f,
-        255,
-        255,
-        255
-    );
-
-    drawText(
-        ":;<=>?@[\\]^_`{|}~",
-        220.0f,
-        275.0f,
-        3.0f,
-        255,
-        255,
-        255
-    );
-
-
-    // --------------------------------------------------------
-    // Original @ test.
-    // --------------------------------------------------------
-
-    drawText(
-        "@",
-        300.0f,
-        315.0f,
-        8.0f,
-        255,
-        255,
-        255
+        "R: x10  L: x100  X: CANCEL  Y: APPLY",
+        LABEL_X,
+        422.0f,
+        TEXT_SCALE,
+        170,
+        170,
+        170
     );
 
 

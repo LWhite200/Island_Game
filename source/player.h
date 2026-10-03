@@ -21,7 +21,7 @@ typedef struct {
 extern float g_cameraYawOffset;
 
 void initPlayer   (Player* player);
-void updatePlayer (Player* player, bool upp, bool down, bool left, bool right,
+bool updatePlayer (Player* player, bool upp, bool down, bool left, bool right,
                    IslandManager* islandManager);
 void drawPlayer   (float x, float y, float z, float yaw);
 
@@ -29,3 +29,6 @@ void drawPlayer   (float x, float y, float z, float yaw);
 // yVelocity gets snapped to exactly 0 on landing, so this doubles as a
 // "can I jump right now?" check.
 bool playerIsGrounded(const Player* player);
+
+bool playerLandAhead(Player* player, float boatX, float boatZ, float boatYaw,
+                     IslandManager* islandManager);

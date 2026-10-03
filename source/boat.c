@@ -36,10 +36,12 @@ static bool checkWorldBoundary(Vec3 pos, float radius) {
             pos.z < -WORLD_RADIUS + radius || pos.z > WORLD_RADIUS - radius);
 }
 
-void updateBoat(Boat* boat,
+bool updateBoat(Boat* boat,
                 bool upp, bool down, bool left, bool right,
                 float time, IslandManager* islandManager)
 {
+    bool pushedLand = false;
+
     // --- Live wave Y for this frame ---
     float waveY = waveHeightAt(boat->position.x, boat->position.z, time);
 
@@ -70,11 +72,21 @@ void updateBoat(Boat* boat,
         drawIndicator(curPos);
 
     // --- Movement ---
-    if (upp && !frontBlocked) {
+    // Detect land separately from world-boundary collision.  A land hit is
+    // reported to main.c so PLAYER_SNAP can turn the boat into the player.
+    bool frontHitsLand = checkAllIslandsCollision(islandManager, fwdPos, boat->radius);
+    bool behindHitsLand = checkAllIslandsCollision(islandManager, bwdPos, boat->radius);
+
+    if (upp && frontHitsLand)
+        pushedLand = true;
+    else if (upp && !frontBlocked) {
         boat->position.x -= sinf(boat->yaw) * boat->speed;
         boat->position.z += cosf(boat->yaw) * boat->speed;
     }
-    if (down && !behindBlocked) {
+
+    if (down && behindHitsLand)
+        pushedLand = true;
+    else if (down && !behindBlocked) {
         boat->position.x += sinf(boat->yaw) * boat->speed;
         boat->position.z -= cosf(boat->yaw) * boat->speed;
     }
@@ -82,6 +94,26 @@ void updateBoat(Boat* boat,
     // --- Rotation (always allowed) ---
     if (left)  boat->yaw -= 0.05f;
     if (right) boat->yaw += 0.05f;
+
+    return pushedLand;
+}
+
+// ============================================================
+// PLAYER_SNAP launch helper
+// ============================================================
+
+void boatLaunch(Boat* boat, float x, float z, float yaw, IslandManager* islandManager)
+{
+    (void)islandManager;
+
+    // Start just beyond the shoreline in the direction the player was
+    // travelling. The next frame can then sail normally.
+    const float LAUNCH_DISTANCE = 1.10f;
+
+    boat->position.x = x - sinf(yaw) * LAUNCH_DISTANCE * 2;
+    boat->position.z = z + cosf(yaw) * LAUNCH_DISTANCE * 2;
+    boat->yaw = yaw;
+    boat->position.y = 15.0f;
 }
 
 // ============================================================
