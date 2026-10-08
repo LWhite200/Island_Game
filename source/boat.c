@@ -104,23 +104,45 @@ bool updateBoat(Boat* boat,
 
 void boatLaunch(Boat* boat, float x, float z, float yaw, IslandManager* islandManager)
 {
-    (void)islandManager;
+    // Place the boat in the direction the player was travelling, starting
+    // just past the shoreline and moving outward until it is clear of the
+    // island.  On a gentle beach the sloping sea floor stays inside the boat's
+    // collision sphere for a long way, so a fixed short distance can leave the
+    // boat touching (and stuck on) the island.
+    const float MIN_DISTANCE = 1.10f;  // closest the boat may be placed
+    const float MAX_DISTANCE = 25.0f;  // give up searching beyond this
+    const float STEP         = 0.25f;
+    const float MARGIN       = 0.5f;   // extra clearance (covers wave bobbing)
 
-    // Start just beyond the shoreline in the direction the player was
-    // travelling. The next frame can then sail normally.
-    const float LAUNCH_DISTANCE = 1.10f;
+    float dx = -sinf(yaw);
+    float dz =  cosf(yaw);
 
-    boat->position.x = x - sinf(yaw) * LAUNCH_DISTANCE * 2;
-    boat->position.z = z + cosf(yaw) * LAUNCH_DISTANCE * 2;
+    float dist = MIN_DISTANCE;
+    bool  found = false;
+    for (; dist <= MAX_DISTANCE; dist += STEP) {
+        Vec3 p = { x + dx * dist, 0.0f, z + dz * dist };
+        if (!checkAllIslandsCollision(islandManager, p, boat->radius + MARGIN) &&
+            !checkWorldBoundary(p, boat->radius)) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) dist = MIN_DISTANCE;   // nothing clear nearby: old behaviour
+
+    boat->position.x = x + dx * dist;
+    boat->position.z = z + dz * dist;
     boat->yaw = yaw;
-    boat->position.y = 15.0f;
+    boat->position.y = 0.0f;
 }
 
 // ============================================================
 // Rendering
 // ============================================================
 
-void drawBoat(float x, float y, float z, float yaw) {
+void drawBoat(float x, float y, float z, float yaw, float darken, float scale) {
+    // Colours fade toward 40% brightness as darken goes 0 -> 1.
+    const float shade = 1.0f - 0.6f * darken;
+
     const float LEN    = 1.5f;
     const float WIDTH  = 0.5f;
     const float HEIGHT = 0.3f;
@@ -140,10 +162,12 @@ void drawBoat(float x, float y, float z, float yaw) {
     for (int i = 0; i < 8; i++) {
         float rx = verts[i][0]*cosY - verts[i][2]*sinY;
         float rz = verts[i][0]*sinY + verts[i][2]*cosY;
-        verts[i][0] = rx; verts[i][2] = rz;
+        verts[i][0] = rx * scale;
+        verts[i][1] = verts[i][1] * scale;
+        verts[i][2] = rz * scale;
     }
 
-    #define V(i,R,G,B) GX_Position3f32(x+verts[i][0], y+verts[i][1], z+verts[i][2]); GX_Color3f32(R,G,B)
+    #define V(i,R,G,B) GX_Position3f32(x+verts[i][0], y+verts[i][1], z+verts[i][2]); GX_Color3f32((R)*shade,(G)*shade,(B)*shade)
 
     GX_Begin(GX_QUADS, GX_VTXFMT0, 24);
     V(0,1,1,1); V(1,1,1,1); V(2,1,1,1); V(3,1,1,1); // front
@@ -161,7 +185,7 @@ void drawBoat(float x, float y, float z, float yaw) {
     float mx = mastTop[0]*cosY - mastTop[2]*sinY;
     float mz = mastTop[0]*sinY + mastTop[2]*cosY;
     GX_Begin(GX_LINES, GX_VTXFMT0, 2);
-    GX_Position3f32(x, y + HEIGHT/2, z); GX_Color3f32(0.6f, 0.4f, 0.2f);
-    GX_Position3f32(x + mx, y + mastTop[1], z + mz); GX_Color3f32(0.6f, 0.4f, 0.2f);
+    GX_Position3f32(x, y + (HEIGHT/2)*scale, z); GX_Color3f32(0.6f*shade, 0.4f*shade, 0.2f*shade);
+    GX_Position3f32(x + mx*scale, y + mastTop[1]*scale, z + mz*scale); GX_Color3f32(0.6f*shade, 0.4f*shade, 0.2f*shade);
     GX_End();
 }

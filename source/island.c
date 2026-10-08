@@ -14,6 +14,104 @@
 // SECTION: mesh generation
 // ============================================================
 
+// Island profile.
+//
+// The top is the original hemisphere (radius * heightScale tall), unchanged.
+// A hemisphere is vertical at its rim, which is too steep to walk, so the
+// dome is cut off where its slope has dropped to ISLAND_WALK_SLOPE and a
+// gentle "beach" skirt continues outward from there:
+//
+//   - the skirt starts with exactly the dome's slope, so there is no crease
+//   - it flattens smoothly to zero slope at the waterline
+//
+// The beach makes the island wider than `radius`, so by default the whole
+// island is scaled down to fit back inside `radius` (same shape, same slopes,
+// islands keep their spacing).  Define ISLAND_FIT_FOOTPRINT as 0 to keep the
+// full-size dome and let the beach spill outward instead.
+// The player treats surfaces steeper than about 1.0 (normal.y < 0.7) as
+// walls, so keep this under ~0.9 to be able to walk the whole island.
+// Lower = gentler (and wider) beach.
+#ifndef ISLAND_FIT_FOOTPRINT
+#define ISLAND_FIT_FOOTPRINT 1
+#endif
+#ifndef ISLAND_WALK_SLOPE
+#define ISLAND_WALK_SLOPE 0.75f
+#endif
+
+// ============================================================
+// SECTION: per-island variation
+// ============================================================
+//
+// All of this is scaled by ISLAND_RANDOMNESS (0..1). At 0 every amplitude
+// is exactly 0 and every multiplier exactly 1, so the generated mesh is
+// bit-for-bit the plain dome.  At 1 you get the maximums below.
+// Tweak the maximums to taste.
+
+#define VAR_SIZE_MAX     1.0f   // radius        : +/- 25%
+#define VAR_HEIGHT_MAX   2.5f   // height scale  : +/- 50%
+#define VAR_TINT_BRIGHT  1.0f   // colour        : overall brightness +/- 20%
+#define VAR_TINT_CHAN    1.0f   // colour        : extra per-channel shift +/- 10%
+
+// Shape harmonics: frequency around the island, and max amplitude.
+static const float kLumpFreq[ISLAND_LUMPS] = { 2.0f, 3.0f, 5.0f };  // oval, triangle-ish, lumpy
+static const float kLumpMax [ISLAND_LUMPS] = { 0.20f, 0.10f, 0.06f };
+
+// Height harmonics (lopsided / ridged tops).
+static const float kBumpFreq[ISLAND_BUMPS] = { 2.0f, 3.0f };
+static const float kBumpMax [ISLAND_BUMPS] = { 0.25f, 0.15f };
+
+static float rand01(void)   { return (float)((rand() >> 8) & 0xFFFF) / 65536.0f; }  // [0, 1)
+static float randSigned(void) { return rand01() * 2.0f - 1.0f; }                    // [-1, 1)
+
+// Ring-radius multiplier at angle theta (1.0 for a perfect circle).
+static float radialFactor(const Island* isle, float theta) {
+    float f = 1.0f;
+    for (int k = 0; k < ISLAND_LUMPS; k++)
+        f += isle->lumpAmp[k] * cosf(kLumpFreq[k] * theta + isle->lumpPhase[k]);
+    return f;
+}
+
+// Height multiplier bump at angle theta (0.0 for a symmetric dome).
+static float heightBump(const Island* isle, float theta) {
+    float f = 0.0f;
+    for (int k = 0; k < ISLAND_BUMPS; k++)
+        f += isle->bumpAmp[k] * cosf(kBumpFreq[k] * theta + isle->bumpPhase[k]);
+    return f;
+}
+
+// Rolls this island's random parameters. Called once from createIsland().
+static void rollIslandVariation(Island* isle, float rnd) {
+    // Everything starts at "no variation".
+    for (int k = 0; k < ISLAND_LUMPS; k++) { isle->lumpAmp[k] = 0.0f; isle->lumpPhase[k] = 0.0f; }
+    for (int k = 0; k < ISLAND_BUMPS; k++) { isle->bumpAmp[k] = 0.0f; isle->bumpPhase[k] = 0.0f; }
+    isle->tintR = isle->tintG = isle->tintB = 1.0f;
+
+    if (rnd <= 0.0f) return;
+
+    // Size and height.
+    isle->radius      *= 1.0f + VAR_SIZE_MAX   * rnd * randSigned();
+    isle->heightScale *= 1.0f + VAR_HEIGHT_MAX * rnd * randSigned();
+
+    // Shape and height harmonics: random amplitude up to the max, random phase.
+    for (int k = 0; k < ISLAND_LUMPS; k++) {
+        isle->lumpAmp[k]   = kLumpMax[k] * rnd * rand01();
+        isle->lumpPhase[k] = rand01() * 2.0f * (float)M_PI;
+    }
+    for (int k = 0; k < ISLAND_BUMPS; k++) {
+        isle->bumpAmp[k]   = kBumpMax[k] * rnd * rand01();
+        isle->bumpPhase[k] = rand01() * 2.0f * (float)M_PI;
+    }
+
+    // Colour: sometimes a different palette entirely, always a slight tint.
+    if (rand01() < rnd)
+        isle->colorStyle = (IslandColorStyle)(rand() % NUM_ISLAND_STYLES);
+
+    float bright = VAR_TINT_BRIGHT * rnd * randSigned();
+    isle->tintR = 1.0f + bright + VAR_TINT_CHAN * rnd * randSigned();
+    isle->tintG = 1.0f + bright + VAR_TINT_CHAN * rnd * randSigned();
+    isle->tintB = 1.0f + bright + VAR_TINT_CHAN * rnd * randSigned();
+}
+
 static bool buildIslandMesh(Island* isle) {
     const int LON = ISLAND_LON_SEGMENTS;
     const int LAT = ISLAND_LAT_SEGMENTS;
@@ -22,18 +120,64 @@ static bool buildIslandMesh(Island* isle) {
     isle->verts = (Vec3*)malloc((size_t)isle->vertCount * sizeof(Vec3));
     if (!isle->verts) return false;
 
-    // ---- 1. Fill the vertex grid ----
+    // ---- Profile setup ----
+    const float R  = isle->radius;
+    const float Hp = R * isle->heightScale;          // peak height
+    const float S  = ISLAND_WALK_SLOPE;
+
+    // Dome slope at angle phi is heightScale / tan(phi); find where it hits S.
+    const float phiC = atanf(isle->heightScale / S);
+    const float rC   = R  * cosf(phiC);              // dome radius at the join
+    const float hC   = Hp * sinf(phiC);              // dome height at the join
+    float L = 2.0f * hC / S;                         // skirt length (flat at the end)
+    if (L < 1e-4f) L = 1e-4f;
+
+    // Uniform scale (applies to width and height, so slopes are unchanged).
+#if ISLAND_FIT_FOOTPRINT
+    const float fit = R / (rC + L);
+#else
+    const float fit = 1.0f;
+#endif
+
+    // Rings: the outer third are the skirt, the rest are the dome.
+    int nSkirt = LAT / 3;
+    if (nSkirt < 2)       nSkirt = 2;
+    if (nSkirt > LAT - 1) nSkirt = LAT - 1;
+    const int nDome = LAT - nSkirt;
+
+    // ---- 1. Fill the vertex grid (j = 0 is the rim, j = LAT the peak) ----
     for (int j = 0; j <= LAT; j++) {
-        float phi  = (j * (M_PI / 2.0f)) / LAT;
-        float ring = isle->radius * cosf(phi);
-        float h    = isle->radius * sinf(phi) * isle->heightScale;
+        float ring, h;
+
+        if (j <= nSkirt) {
+            // Skirt: x runs from L (waterline) back to 0 (join with the dome).
+            float x = L * (1.0f - (float)j / (float)nSkirt);
+            ring = rC + x;
+            h    = hC - S * x + (S * x * x) / (2.0f * L);
+        } else {
+            // Dome: the original hemisphere from the join angle up to the top.
+            float phi = phiC + ((float)M_PI * 0.5f - phiC)
+                             * (float)(j - nSkirt) / (float)nDome;
+            ring = R  * cosf(phi);
+            h    = Hp * sinf(phi);
+        }
+
+        ring *= fit;
+        h    *= fit;
+
+        // Height variation fades to nothing at the peak (j == LAT) so the
+        // top ring stays a single point instead of tearing into spikes.
+        // (The rim, j == 0, is already at h == 0.)
+        const float bumpWeight = 1.0f - (float)j / (float)LAT;
 
         for (int i = 0; i < LON; i++) {
             float theta = (i * 2.0f * M_PI) / LON;
+            float rr = ring * radialFactor(isle, theta);
+            float hh = h    * (1.0f + heightBump(isle, theta) * bumpWeight);
             isle->verts[j * LON + i] = (Vec3){
-                isle->center.x + ring * cosf(theta),
-                isle->center.y + h,
-                isle->center.z + ring * sinf(theta)
+                isle->center.x + rr * cosf(theta),
+                isle->center.y + hh,
+                isle->center.z + rr * sinf(theta)
             };
         }
     }
@@ -85,6 +229,12 @@ Island* createIsland(IslandManager* manager, float x, float z) {
     isle->radius        = ISLAND_DEFAULT_RADIUS;
     isle->heightScale   = ISLAND_DEFAULT_HEIGHT_SCALE;
     isle->colorStyle    = ISLAND_DEFAULT_STYLE;
+
+    // Variation: 0 = clone of the defaults, 1 = maximum difference.
+    float rnd = ISLAND_RANDOMNESS;
+    if (rnd < 0.0f) rnd = 0.0f;
+    if (rnd > 1.0f) rnd = 1.0f;
+    rollIslandVariation(isle, rnd);
 
     if (!buildIslandMesh(isle)) return NULL;
 
@@ -166,6 +316,8 @@ static void getVertexColor(int i, int j, float* r, float* g, float* b) {
     else                  { *r = 0.0f; *g = 0.0f; *b = 1.0f; } // Blue
 }
 
+static float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
 static void drawIsland(const Island* isle, Vec3 playerPos, float touchRadius) {
     const int LON = ISLAND_LON_SEGMENTS;
     const int LAT = ISLAND_LAT_SEGMENTS;
@@ -177,6 +329,10 @@ static void drawIsland(const Island* isle, Vec3 playerPos, float touchRadius) {
         float r1, g1, b1, r2, g2, b2;
         colorForHeightFraction(isle->colorStyle, f1, &r1, &g1, &b1);
         colorForHeightFraction(isle->colorStyle, f2, &r2, &g2, &b2);
+
+        // Per-island tint (all 1.0 when randomness is 0).
+        r1 = clamp01(r1 * isle->tintR); g1 = clamp01(g1 * isle->tintG); b1 = clamp01(b1 * isle->tintB);
+        r2 = clamp01(r2 * isle->tintR); g2 = clamp01(g2 * isle->tintG); b2 = clamp01(b2 * isle->tintB);
 
         for (int i = 0; i < LON; i++) {
             int i2 = (i + 1) % LON;

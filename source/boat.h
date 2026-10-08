@@ -15,7 +15,9 @@ typedef struct {
 void initBoat   (Boat* boat);
 bool updateBoat (Boat* boat, bool upp, bool down, bool left, bool right,
                  float time, IslandManager* islandManager);
-void drawBoat   (float x, float y, float z, float yaw);
+// darken: 0 = normal colours, 1 = fully dimmed   (the "switching" cue)
+// scale : 1 = full size, 0 = invisible            (shrink out / grow in)
+void drawBoat   (float x, float y, float z, float yaw, float darken, float scale);
 
 void boatLaunch (Boat* boat, float x, float z, float yaw,
                  IslandManager* islandManager);

@@ -22,6 +22,11 @@ float g_cameraYawOffset = 0.0f;
 #define PLAYER_PUSH_ITERATIONS 3
 #define PLAYER_FOOT_OFFSET    0.3f
 
+// How far below the water-transition height (boatChangeY) the player may wade
+// before being stopped.  The boat swap charges the whole time they are in the
+// water, so a bigger number = a longer walk into the sea before the swap.
+#define PLAYER_WADE_DEPTH     0.6f
+
 // ============================================================
 // Initialisation
 // ============================================================
@@ -80,25 +85,37 @@ bool updatePlayer(Player* player,
     bool behindBlocked = checkWorldBoundary(bwdPos, player->radius);
 
     // ---- Water / Edge Detection ----
-    // Do not actually walk into the water. Instead report the contact so
-    // main.c can immediately replace the player with the boat.
+    // The player may wade a little way into the water.  While they are in it
+    // and heading deeper (or are stopped at the wading limit) we report the
+    // contact, and main.c turns that into the boat after a short delay.
     float currentFeetY = player->position.y - PLAYER_FOOT_OFFSET;
+    float wadeLimitY   = boatChangeY - PLAYER_WADE_DEPTH;
+
+    // Are the player's feet in the water right now?
+    Vec3 hereRayStart = { player->position.x, currentFeetY + PLAYER_STEP_UP, player->position.z };
+    float hereGroundY = islandGroundHeight(islandManager, hereRayStart, player->radius);
+    bool  inWater     = (hereGroundY == ISLAND_NO_GROUND || hereGroundY < boatChangeY);
 
     Vec3 fwdRayStart = { fwdPos.x, currentFeetY + PLAYER_STEP_UP, fwdPos.z };
     float fwdGroundY = islandGroundHeight(islandManager, fwdRayStart, player->radius);
-    bool frontWater = (fwdGroundY == ISLAND_NO_GROUND || fwdGroundY < boatChangeY);
-    if (frontWater) {
+    bool frontLimit = (fwdGroundY == ISLAND_NO_GROUND || fwdGroundY < wadeLimitY);
+    if (frontLimit)
         frontBlocked = true;
-        if (upp) touchedWater = true;
-    }
+    // Deeper = the ground ahead is in the water and not higher than here.
+    bool frontDeeper = (fwdGroundY != ISLAND_NO_GROUND &&
+                        fwdGroundY < boatChangeY && fwdGroundY <= hereGroundY);
+    if (upp && (frontLimit || (inWater && frontDeeper)))
+        touchedWater = true;
 
     Vec3 bwdRayStart = { bwdPos.x, currentFeetY + PLAYER_STEP_UP, bwdPos.z };
     float bwdGroundY = islandGroundHeight(islandManager, bwdRayStart, player->radius);
-    bool behindWater = (bwdGroundY == ISLAND_NO_GROUND || bwdGroundY < boatChangeY);
-    if (behindWater) {
+    bool behindLimit = (bwdGroundY == ISLAND_NO_GROUND || bwdGroundY < wadeLimitY);
+    if (behindLimit)
         behindBlocked = true;
-        if (down) touchedWater = true;
-    }
+    bool behindDeeper = (bwdGroundY != ISLAND_NO_GROUND &&
+                         bwdGroundY < boatChangeY && bwdGroundY <= hereGroundY);
+    if (down && (behindLimit || (inWater && behindDeeper)))
+        touchedWater = true;
 
     // ---- Horizontal movement execution ----
     if (upp && !frontBlocked) {
@@ -174,27 +191,40 @@ bool playerLandAhead(Player* player,
                      float boatX, float boatZ, float boatYaw,
                      IslandManager* islandManager)
 {
-    // The boat has reached land. Place the player slightly forward
-    // onto the shoreline so the transition feels seamless.
-    const float LAND_AHEAD = 2.0f;
+    // The boat has reached land. Place the player forward onto the shoreline
+    // so the transition feels seamless.  On a gentle beach the boat stops while
+    // the sea floor is still well below the surface, so look further ahead,
+    // starting close and moving outward until we find real dry land.
+    const float LAND_AHEAD_MIN  = 2.0f;
+    const float LAND_AHEAD_MAX  = 12.0f;
+    const float LAND_AHEAD_STEP = 0.5f;
 
-    float x = boatX - sinf(boatYaw) * LAND_AHEAD;
-    float z = boatZ + cosf(boatYaw) * LAND_AHEAD;
+    float x = boatX;
+    float z = boatZ;
+    float groundY = ISLAND_NO_GROUND;
 
-    // Start a ray well above the shoreline and look for actual island ground.
-    Vec3 rayStart = {
-        x,
-        boatChangeY + 25.0f,
-        z
-    };
+    for (float ahead = LAND_AHEAD_MIN; ahead <= LAND_AHEAD_MAX; ahead += LAND_AHEAD_STEP) {
+        x = boatX - sinf(boatYaw) * ahead;
+        z = boatZ + cosf(boatYaw) * ahead;
 
-    float groundY = islandGroundHeight(
-        islandManager,
-        rayStart,
-        player->radius
-    );
+        // Start a ray well above the shoreline and look for actual island ground.
+        Vec3 rayStart = {
+            x,
+            boatChangeY + 25.0f,
+            z
+        };
 
-    // No land here, or it is still below the water transition height.
+        groundY = islandGroundHeight(
+            islandManager,
+            rayStart,
+            player->radius
+        );
+
+        if (groundY != ISLAND_NO_GROUND && groundY >= boatChangeY)
+            break;
+    }
+
+    // No land found ahead, or it is still below the water transition height.
     if (groundY == ISLAND_NO_GROUND || groundY < boatChangeY)
         return false;
 
@@ -267,14 +297,17 @@ static const float s_verts[5][3] = {
 static const int s_base[2][3] = { {1,2,3}, {1,3,4} };
 static const int s_side[4][3] = { {0,1,2}, {0,2,3}, {0,3,4}, {0,4,1} };
 
-void drawPlayer(float x, float y, float z, float yaw) {
+void drawPlayer(float x, float y, float z, float yaw, float darken, float scale) {
+    // Colours fade toward 40% brightness as darken goes 0 -> 1.
+    const float shade = 1.0f - 0.6f * darken;
+
     float cosY = cosf(yaw), sinY = sinf(yaw);
 
     float rv[5][3];
     for (int i = 0; i < 5; i++) {
-        rv[i][0] = s_verts[i][0]*cosY - s_verts[i][2]*sinY;
-        rv[i][1] = s_verts[i][1];
-        rv[i][2] = s_verts[i][0]*sinY + s_verts[i][2]*cosY;
+        rv[i][0] = (s_verts[i][0]*cosY - s_verts[i][2]*sinY) * scale;
+        rv[i][1] =  s_verts[i][1] * scale;
+        rv[i][2] = (s_verts[i][0]*sinY + s_verts[i][2]*cosY) * scale;
     }
 
     GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 6);
@@ -282,7 +315,7 @@ void drawPlayer(float x, float y, float z, float yaw) {
         for (int v = 0; v < 3; v++) {
             int vi = s_base[f][v];
             GX_Position3f32(x+rv[vi][0], y+rv[vi][1], z+rv[vi][2]);
-            GX_Color3f32(0.08f, 0.1f, 0.08f);
+            GX_Color3f32(0.08f*shade, 0.1f*shade, 0.08f*shade);
         }
     GX_End();
 
@@ -292,7 +325,7 @@ void drawPlayer(float x, float y, float z, float yaw) {
         for (int v = 0; v < 3; v++) {
             int vi = s_side[f][v];
             GX_Position3f32(x+rv[vi][0], y+rv[vi][1], z+rv[vi][2]);
-            GX_Color3f32(0.2f*br, 1.0f*br, 0.4f*br);
+            GX_Color3f32(0.2f*br*shade, 1.0f*br*shade, 0.4f*br*shade);
         }
     }
     GX_End();

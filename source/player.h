@@ -23,7 +23,9 @@ extern float g_cameraYawOffset;
 void initPlayer   (Player* player);
 bool updatePlayer (Player* player, bool upp, bool down, bool left, bool right,
                    IslandManager* islandManager);
-void drawPlayer   (float x, float y, float z, float yaw);
+// darken: 0 = normal colours, 1 = fully dimmed   (the "switching" cue)
+// scale : 1 = full size, 0 = invisible            (shrink out / grow in)
+void drawPlayer   (float x, float y, float z, float yaw, float darken, float scale);
 
 // True the moment the player is resting on the ground (island or sea floor) --
 // yVelocity gets snapped to exactly 0 on landing, so this doubles as a

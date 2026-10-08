@@ -23,11 +23,12 @@ float g_islandBaseY    = -1.0f;
 // ============================================================
 
 int   g_numIslands               = 5;
-float g_islandDefaultRadius      = 15.0f;
-float g_islandDefaultHeightScale = 0.5f;
+float g_islandDefaultRadius      = 30.0f;
+float g_islandDefaultHeightScale = 0.15f;
 int   g_islandDefaultStyle       = 0;    // ISLAND_TROPICAL
 int   g_islandLonSegments        = 16;
 int   g_islandLatSegments        = 8;
+float g_islandRandomness         = 0.0f; // 0 = identical clones, 1 = max variation
 
 // ============================================================
 // Streaming world

@@ -34,6 +34,10 @@
 
 #define GP_FIFO_SIZE (256 * 1024)
 
+// How long (in frames) the boat must be touching land / the player must be
+// pressing into water before the switch happens. 30 frames = ~0.5s at 60 fps.
+#define SNAP_DELAY_FRAMES 30
+
 int main(void) {
     // ---- Hardware init ----
     PAD_Init();
@@ -57,6 +61,9 @@ int main(void) {
 
     u32 fb   = 0;
     f32 time = 0.0f;
+
+    // Counts up while a PLAYER_SNAP switch is "charging"; drives the darkening.
+    int snapFrames = 0;
 
     // ============================================================
     // Main loop
@@ -106,6 +113,7 @@ int main(void) {
 
             // Always return to player mode.
             isPlayerActive = true;
+            snapFrames = 0;
 
             // Reset the boat as well.
             initBoat(&boat);
@@ -135,6 +143,7 @@ int main(void) {
         // ---- B: board / disembark ----
         
         if (btnB) {
+            snapFrames = 0;
             if (!isPlayerActive) {
                 // Disembark: only when the boat is touching land
                 Vec3 boatPos = { boat.position.x, boat.position.y, boat.position.z };
@@ -147,12 +156,18 @@ int main(void) {
             } else {
                 // Re-board: only near sea level
                 if (player.position.y <= boatChangeY) {
+                    float    camYawOld = player.yaw + g_cameraYawOffset;
+                    guVector oldPos    = player.position;
+
                     boat.position.x = player.position.x;
                     boat.position.z = player.position.z;
                     boat.position.y = 0.0f;
                     boat.yaw        = player.yaw;
                     isPlayerActive  = false;
-                    initCamera(&camera);
+
+                    // Keep the camera where it is (no initCamera: that resets
+                    // it to the world origin and it swings across the map).
+                    cameraRetarget(&camera, camYawOld, &oldPos, &boat.position, boat.yaw);
                 }
             }
         }
@@ -174,22 +189,70 @@ int main(void) {
             pushedLand = updateBoat(&boat, moveFwd, moveBack, moveLeft, moveRight, time, &world);
 
         // ---- PLAYER_SNAP: switch between player and boat at the shoreline ----
-        if (PLAYER_SNAP) {
-            if (isPlayerActive && touchedWater) {
-                // Player -> boat. Keep travelling the way the player was moving
-                // (player movement is relative to the camera, hence the offset).
-                float heading = player.yaw + g_cameraYawOffset;
-                if (moveBack && !moveFwd) heading += 3.14159265f;   // walked in backwards
+        // "Ghost" of the entity we are about to become. It is drawn growing in
+        // at the spot where it will appear, while the current one shrinks out.
+        bool   ghostValid = false;
+        Boat   ghostBoat   = boat;
+        Player ghostPlayer = player;
 
-                boatLaunch(&boat, player.position.x, player.position.z, heading, &world);
-                isPlayerActive = false;
-                initCamera(&camera);
+        if (PLAYER_SNAP) {
+            // Is a switch being asked for this frame?
+            bool wantSwitch = false;
+            if (isPlayerActive) {
+                wantSwitch = touchedWater;
+
+                // Where the boat will appear (same heading the switch will use).
+                float heading = player.yaw + g_cameraYawOffset;
+                if (moveBack && !moveFwd) heading += 3.14159265f;   // walking backwards
+                if (wantSwitch || snapFrames > 0) {
+                    boatLaunch(&ghostBoat, player.position.x, player.position.z, heading, &world);
+                    ghostValid = true;
+                }
+            } else if (pushedLand || snapFrames > 0) {
+                // Where the player will appear. Computed on a copy so the real
+                // player isn't moved until the switch completes.
+                ghostValid = playerLandAhead(&ghostPlayer, boat.position.x, boat.position.z,
+                                             boat.yaw, &world);
+                wantSwitch = pushedLand && ghostValid;
             }
-            else if (!isPlayerActive && pushedLand) {
-                // Boat -> player, but only if there is a beach to stand on.
-                if (playerLandAhead(&player, boat.position.x, boat.position.z, boat.yaw, &world))
+
+            // Charge while touching; drain twice as fast when contact is lost,
+            // so a brief wobble doesn't lose all progress but backing off cancels.
+            if (wantSwitch) {
+                snapFrames++;
+            } else if (snapFrames > 0) {
+                snapFrames -= 2;
+                if (snapFrames < 0) snapFrames = 0;
+            }
+
+            if (snapFrames >= SNAP_DELAY_FRAMES) {
+                snapFrames = 0;
+
+                if (isPlayerActive) {
+                    // Player -> boat. Keep travelling the way the player was moving
+                    // (player movement is relative to the camera, hence the offset).
+                    float    camYawOld = player.yaw + g_cameraYawOffset;
+                    guVector oldPos    = player.position;
+
+                    boat = ghostBoat;   // already placed by boatLaunch above
+                    isPlayerActive = false;
+
+                    // No initCamera: keep the camera heading/position and glide
+                    // the look target over to the boat.
+                    cameraRetarget(&camera, camYawOld, &oldPos, &boat.position, boat.yaw);
+                }
+                else if (ghostValid) {
+                    float    camYawOld = boat.yaw + g_cameraYawOffset;
+                    guVector oldPos    = boat.position;
+
+                    player = ghostPlayer;   // already placed by playerLandAhead above
                     isPlayerActive = true;
+
+                    cameraRetarget(&camera, camYawOld, &oldPos, &player.position, player.yaw);
+                }
             }
+        } else {
+            snapFrames = 0;
         }
 
         // Recompute the tracked position after PLAYER_SNAP so the camera and
@@ -217,10 +280,25 @@ int main(void) {
         drawAllIslands(&world, trackPos, 1.5f); // (or whatever radius fits your player/boat size)
         drawWorldBoundary();
 
-        if (isPlayerActive)
-            drawPlayer(player.position.x, player.position.y, player.position.z, player.yaw);
-        else
-            drawBoat(boat.position.x, boat.position.y, boat.position.z, boat.yaw);
+        // 0 -> 1 as the switch charges, eased so it starts and ends gently.
+        // The current entity darkens and shrinks away; the incoming one grows
+        // in from dark at the spot where it will appear.
+        float t    = (float)snapFrames / (float)SNAP_DELAY_FRAMES;
+        float ease = t * t * (3.0f - 2.0f * t);
+
+        if (isPlayerActive) {
+            drawPlayer(player.position.x, player.position.y, player.position.z,
+                       player.yaw, ease, 1.0f - ease);
+            if (ghostValid && snapFrames > 0)
+                drawBoat(ghostBoat.position.x, ghostBoat.position.y, ghostBoat.position.z,
+                         ghostBoat.yaw, 1.0f - ease, ease);
+        } else {
+            drawBoat(boat.position.x, boat.position.y, boat.position.z,
+                     boat.yaw, ease, 1.0f - ease);
+            if (ghostValid && snapFrames > 0)
+                drawPlayer(ghostPlayer.position.x, ghostPlayer.position.y, ghostPlayer.position.z,
+                           ghostPlayer.yaw, 1.0f - ease, ease);
+        }
 
 
         drawDebugMenu();

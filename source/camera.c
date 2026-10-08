@@ -32,6 +32,7 @@ void initCamera(Camera* camera) {
     camera->smoothingSpeed = 0.12f;
     camera->pitchOffset    = 0.0f;
     camera->pitchTarget    = 0.0f;
+    camera->lookLag        = (guVector){ 0.0f, 0.0f, 0.0f };
 }
 
 // ============================================================
@@ -45,6 +46,25 @@ static float wrapAngle(float a) {
     while (a >  M_PI) a -= 2.0f * M_PI;
     while (a < -M_PI) a += 2.0f * M_PI;
     return a;
+}
+
+// ============================================================
+// Entity switch (player <-> boat)
+// ============================================================
+
+void cameraRetarget(Camera* camera, float oldCamYaw,
+                    const guVector* oldPos, const guVector* newPos,
+                    float newEntityYaw)
+{
+    // The camera heading is (entity yaw + g_cameraYawOffset).  The new entity
+    // has a different yaw, so re-derive the offset that keeps the heading
+    // exactly where it was -- otherwise the camera swings round to the new yaw.
+    g_cameraYawOffset = wrapAngle(oldCamYaw - newEntityYaw);
+
+    // Start the look target on the old entity and let it glide to the new one.
+    camera->lookLag.x = oldPos->x - newPos->x;
+    camera->lookLag.y = oldPos->y - newPos->y;
+    camera->lookLag.z = oldPos->z - newPos->z;
 }
 
 // ============================================================
@@ -109,7 +129,13 @@ void updateCamera(Camera* camera,
     camera->position.z = lerp(camera->position.z, targetZ, camera->smoothingSpeed);
 
     // Look-at slightly above the entity's feet so it's centred in frame
-    camera->look.x = entityPos->x;
-    camera->look.y = entityPos->y + 0.5f;
-    camera->look.z = entityPos->z;
+    // (lookLag is non-zero only just after a player <-> boat switch.)
+    const float lagDecay = 1.0f - camera->smoothingSpeed * 0.5f;
+    camera->lookLag.x *= lagDecay;
+    camera->lookLag.y *= lagDecay;
+    camera->lookLag.z *= lagDecay;
+
+    camera->look.x = entityPos->x + camera->lookLag.x;
+    camera->look.y = entityPos->y + 0.5f + camera->lookLag.y;
+    camera->look.z = entityPos->z + camera->lookLag.z;
 }

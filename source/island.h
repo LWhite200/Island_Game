@@ -29,6 +29,11 @@
 // Returned by islandGroundHeight() when there is no island below a point.
 #define ISLAND_NO_GROUND  (-1.0e9f)
 
+// How many shape harmonics / height harmonics each island carries.
+// The matching frequencies live in island.c (kLumpFreq / kBumpFreq).
+#define ISLAND_LUMPS  3
+#define ISLAND_BUMPS  2
+
 // ---- A single island ----
 typedef struct {
     // --- Description (what the generator was asked for) ---
@@ -36,6 +41,21 @@ typedef struct {
     float radius;        // Footprint radius
     float heightScale;   // Scales the dome height relative to the radius
     IslandColorStyle colorStyle;  // Picks a colour palette when drawing
+
+    // --- Variation (rolled once in createIsland, scaled by ISLAND_RANDOMNESS) ---
+    // With randomness 0 every amplitude is 0 and every tint is 1, so the
+    // island is the plain round dome.
+    //
+    // Shape: the ring radius is multiplied by 1 + sum(lumpAmp[k] * cos(freq*theta + phase)).
+    //   freq 2 stretches it into an oval, freq 3+ makes it lumpy.
+    // Bumps: the same idea for height, fading out toward the peak (so the
+    // peak ring stays a single point).
+    // Tint: multiplies the palette colour.
+    float lumpAmp[ISLAND_LUMPS];
+    float lumpPhase[ISLAND_LUMPS];
+    float bumpAmp[ISLAND_BUMPS];
+    float bumpPhase[ISLAND_BUMPS];
+    float tintR, tintG, tintB;
 
     // --- Mesh (what actually gets drawn) ---
     // A grid of vertices: ISLAND_LON_SEGMENTS columns (wrapping around the

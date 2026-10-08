@@ -45,6 +45,7 @@ extern float g_islandDefaultHeightScale;
 extern int   g_islandDefaultStyle;
 extern int   g_islandLonSegments;
 extern int   g_islandLatSegments;
+extern float g_islandRandomness;
 
 // Streaming world
 extern float g_worldStreamDistance;
@@ -95,6 +96,11 @@ extern bool  g_playerSnap;
 // looking dome but more triangles to push through the GPU every frame.
 #define ISLAND_LON_SEGMENTS         (g_islandLonSegments)   // Slices going around the dome (like longitude)
 #define ISLAND_LAT_SEGMENTS         (g_islandLatSegments)   // Bands going from base to peak (like latitude)
+
+// How different islands are from each other. 0 = every island is an
+// identical clone of the defaults above. 1 = maximum variation in size,
+// shape, height and colour. Each island rolls its own dice at creation.
+#define ISLAND_RANDOMNESS           (g_islandRandomness)
 
 // ============================================================
 // Streaming world constants

@@ -103,6 +103,7 @@ static const DebugItem s_items[] =
     { "ISLAND STYLE",          DEBUG_STYLE, &g_islandDefaultStyle,         0.0f,  (float)(NUM_ISLAND_STYLES - 1) },
     { "ISLAND LON SEGMENTS",   DEBUG_INT,   &g_islandLonSegments,          3.0f,   64.0f },
     { "ISLAND LAT SEGMENTS",   DEBUG_INT,   &g_islandLatSegments,          2.0f,   32.0f },
+    { "ISLAND RANDOMNESS",     DEBUG_FLOAT, &g_islandRandomness,           0.0f,    1.0f },
 
     // ---- Streaming world ----
     { "STREAM DISTANCE",       DEBUG_FLOAT, &g_worldStreamDistance,        1.0f,  500.0f },
@@ -237,8 +238,10 @@ static void adjustItem(int index, int dir, int scale)
     {
         case DEBUG_FLOAT:
 
+            // --- HERE ---
+            // Make smaller because multiplier
             // 0.01, 0.05, 0.1
-            value += (float)dir * 0.1f * (float)scale;
+            value += (float)dir * 0.01f * (float)scale;
             value  = snapToHundredth(value);
             break;
 
@@ -733,7 +736,7 @@ void updateDebugMenu(void)
 #define VALUE_X     360.0f
 
 #define ROW_TOP      66.0f
-#define ROW_HEIGHT   18.0f
+#define ROW_HEIGHT   16.0f      // 20 rows must end above the help text at y=402
 
 #define TEXT_SCALE    2.0f      // 5x7 font -> 10x14 pixels per character
 
@@ -868,9 +871,9 @@ void drawDebugMenu(void)
         {
             drawRect2D(
                 PANEL_X1 + 8.0f,
-                y - 2.0f,
+                y - 1.0f,
                 PANEL_X2 - 8.0f,
-                y + 16.0f,
+                y + 15.0f,
                 0,
                 0,
                 110
