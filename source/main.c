@@ -104,9 +104,11 @@ int main(void) {
 
         // ---- Z: reset player to starting position ----
         if (reset) {
-            player.position.x = 0.0f;
+
+            // Of center because bouncing bug
+            player.position.x = 0.25f;
             player.position.y = 25.0f;
-            player.position.z = 0.0f;
+            player.position.z = 0.25f;
 
             player.yaw       = 0.0f;
             player.yVelocity = 0.0f;

@@ -28,7 +28,7 @@ float g_islandDefaultHeightScale = 0.15f;
 int   g_islandDefaultStyle       = 0;    // ISLAND_TROPICAL
 int   g_islandLonSegments        = 16;
 int   g_islandLatSegments        = 8;
-float g_islandRandomness         = 0.0f; // 0 = identical clones, 1 = max variation
+float g_islandRandomness         = 0.25f; // 0 = identical clones, 1 = max variation
 
 // ============================================================
 // Streaming world

@@ -1,3 +1,4 @@
+//
 // player.c
 // On-foot player controller: movement, jumping, gravity, and island collision.
 //
@@ -191,10 +192,6 @@ bool playerLandAhead(Player* player,
                      float boatX, float boatZ, float boatYaw,
                      IslandManager* islandManager)
 {
-    // The boat has reached land. Place the player forward onto the shoreline
-    // so the transition feels seamless.  On a gentle beach the boat stops while
-    // the sea floor is still well below the surface, so look further ahead,
-    // starting close and moving outward until we find real dry land.
     const float LAND_AHEAD_MIN  = 2.0f;
     const float LAND_AHEAD_MAX  = 12.0f;
     const float LAND_AHEAD_STEP = 0.5f;
@@ -207,7 +204,6 @@ bool playerLandAhead(Player* player,
         x = boatX - sinf(boatYaw) * ahead;
         z = boatZ + cosf(boatYaw) * ahead;
 
-        // Start a ray well above the shoreline and look for actual island ground.
         Vec3 rayStart = {
             x,
             boatChangeY + 25.0f,
@@ -224,19 +220,15 @@ bool playerLandAhead(Player* player,
             break;
     }
 
-    // No land found ahead, or it is still below the water transition height.
     if (groundY == ISLAND_NO_GROUND || groundY < boatChangeY)
         return false;
 
-    // IMPORTANT:
-    // Collision functions use Vec3, while Player.position uses guVector.
     Vec3 landPos = {
         x,
         groundY + PLAYER_FOOT_OFFSET,
         z
     };
 
-    // Push the temporary landing position away from steep shoreline walls.
     Vec3 push;
 
     if (islandWallPush(
@@ -249,7 +241,6 @@ bool playerLandAhead(Player* player,
         landPos.x += push.x;
         landPos.z += push.z;
 
-        // Verify that the pushed position is still valid land.
         Vec3 verifyRay = {
             landPos.x,
             landPos.y + 2.0f,
@@ -271,7 +262,6 @@ bool playerLandAhead(Player* player,
         landPos.y = verifyGround + PLAYER_FOOT_OFFSET;
     }
 
-    // Convert Vec3 -> guVector explicitly.
     player->position.x = landPos.x;
     player->position.y = landPos.y;
     player->position.z = landPos.z;
@@ -287,11 +277,20 @@ bool playerLandAhead(Player* player,
 // ============================================================
 
 static const float s_verts[5][3] = {
-    {  0.0f,  0.5f,  0.0f },
-    { -0.3f, -0.3f,  0.3f },
-    {  0.3f, -0.3f,  0.3f },
-    {  0.3f, -0.3f, -0.3f },
-    { -0.3f, -0.3f, -0.3f },
+    {  0.0f,  0.5f,  0.0f }, // 0: Apex (head/top)
+    { -0.3f, -0.3f,  0.3f }, // 1: Front-left
+    {  0.3f, -0.3f,  0.3f }, // 2: Front-right
+    {  0.3f, -0.3f, -0.3f }, // 3: Back-right
+    { -0.3f, -0.3f, -0.3f }, // 4: Back-left
+};
+
+// Vibrant, multi-colored palette for each vertex
+static const float s_vertColors[5][3] = {
+    { 1.0f, 0.85f, 0.2f }, // Apex: Golden Yellow
+    { 0.1f, 0.90f, 0.8f }, // Vertex 1: Teal / Cyan
+    { 0.9f, 0.2f,  0.6f }, // Vertex 2: Magenta / Pink
+    { 0.2f, 0.2f,  1.0f }, // Vertex 3: Electric Blue
+    { 0.5f, 0.9f,  0.1f }, // Vertex 4: Lime Green
 };
 
 static const int s_base[2][3] = { {1,2,3}, {1,3,4} };
@@ -310,22 +309,27 @@ void drawPlayer(float x, float y, float z, float yaw, float darken, float scale)
         rv[i][2] = (s_verts[i][0]*sinY + s_verts[i][2]*cosY) * scale;
     }
 
+    // Draw base (dark slate/grey blend)
     GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 6);
     for (int f = 0; f < 2; f++)
         for (int v = 0; v < 3; v++) {
             int vi = s_base[f][v];
             GX_Position3f32(x+rv[vi][0], y+rv[vi][1], z+rv[vi][2]);
-            GX_Color3f32(0.08f*shade, 0.1f*shade, 0.08f*shade);
+            GX_Color3f32(0.15f * shade, 0.15f * shade, 0.2f * shade);
         }
     GX_End();
 
+    // Draw multi-colored sides with smooth vertex gradients
     GX_Begin(GX_TRIANGLES, GX_VTXFMT0, 12);
     for (int f = 0; f < 4; f++) {
-        float br = 0.85f - 0.1f * f;
         for (int v = 0; v < 3; v++) {
             int vi = s_side[f][v];
             GX_Position3f32(x+rv[vi][0], y+rv[vi][1], z+rv[vi][2]);
-            GX_Color3f32(0.2f*br*shade, 1.0f*br*shade, 0.4f*br*shade);
+            GX_Color3f32(
+                s_vertColors[vi][0] * shade,
+                s_vertColors[vi][1] * shade,
+                s_vertColors[vi][2] * shade
+            );
         }
     }
     GX_End();
